@@ -4074,11 +4074,7 @@ registerRight("Quest", function(scroll)
         end
     end)
 end)
---===== UFO HUB X • Home – Model A V1 + AA1 Auto Box Seller (Sell Stack Loop) =====
--- Header: "Auto Box Seller 💰📦"
--- Row1:   "Auto Box Seller" (no emoji)
--- Action: _sellStack:FireServer(unpack(args)) loop
--- AA1: if Enabled already true, auto-run on load without opening Home
+--===== UFO HUB X • Home – Model A V1 + AA1 Auto Box Seller (Sell Stack Loop + 10s Warmup) =====
 
 registerRight("Shop", function(scroll)
     local TweenService = game:GetService("TweenService")
@@ -4216,8 +4212,9 @@ registerRight("Shop", function(scroll)
     -- STATE + LOOP (AA1)
     ------------------------------------------------------------------------
     local STATE = {
-        Enabled  = SaveGet("Enabled", false),
-        Interval = SaveGet("Interval", 0.35), -- ปรับได้ (กันสแปมเกิน)
+        Enabled   = SaveGet("Enabled", false),
+        Interval  = SaveGet("Interval", 0.35),
+        WarmupSec = SaveGet("WarmupSec", 10), -- ✅ เหล่/หน่วงก่อนเริ่ม 10 วิ
     }
 
     local loopToken = 0
@@ -4230,12 +4227,19 @@ registerRight("Shop", function(scroll)
     local function applyFromState()
         loopToken += 1
         local myToken = loopToken
-
-        if not STATE.Enabled then
-            return
-        end
+        if not STATE.Enabled then return end
 
         task.spawn(function()
+            -- ✅ หน่วงก่อนเริ่มวนลูป
+            local w = tonumber(STATE.WarmupSec) or 10
+            if w > 0 then
+                local tEnd = os.clock() + w
+                while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
+                    task.wait(0.1)
+                end
+            end
+            if not (STATE.Enabled and loopToken == myToken) then return end
+
             while STATE.Enabled and loopToken == myToken do
                 local ok, err = pcall(SellOnce)
                 if not ok then
@@ -4327,24 +4331,14 @@ registerRight("Shop", function(scroll)
         return row
     end
 
-    -- Row1 (English, no emoji)
     makeRowSwitch("ABS_Row1", base + 2, "Auto Box Seller", function()
         return STATE.Enabled
     end, function(v)
         SetEnabled(v)
     end)
 
-    ------------------------------------------------------------------------
-    -- Export (optional)
-    ------------------------------------------------------------------------
     _G.UFOX_AA1 = _G.UFOX_AA1 or {}
-    _G.UFOX_AA1[SYSTEM_NAME] = {
-        state      = STATE,
-        apply      = applyFromState,
-        setEnabled = SetEnabled,
-        saveGet    = function(field, def) return SaveGet(field, def) end,
-        saveSet    = function(field, val) SaveSet(field, val) end,
-    }
+    _G.UFOX_AA1[SYSTEM_NAME] = { state = STATE, apply = applyFromState, setEnabled = SetEnabled }
 end)
 --===== UFO HUB X • Shop – Auto Buy Pickaxe & Miners + Auto Buy Auras + Auto Buy Map (Model A V1 + AA1) =====
 -- Tab: Shop
