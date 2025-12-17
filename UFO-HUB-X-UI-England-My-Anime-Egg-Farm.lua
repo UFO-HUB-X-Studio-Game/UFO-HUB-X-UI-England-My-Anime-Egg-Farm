@@ -709,16 +709,15 @@ registerRight("Quest", function(scroll) end)
 registerRight("Shop", function(scroll) end)
 registerRight("Settings", function(scroll) end)
 --===== UFO HUB X • Home – Model A V1 + AA1 (GLOBAL RUNNER) Auto Collect Boxes (sellStack) -> Hold 5s -> Relay 3s (Loop) =====
--- REQUIRED:
--- 0) Warmup 3s BEFORE first sell
--- 1) _sellStack:FireServer(unpack(args))
--- 2) Hold "Box Stack" 5s (ensure holding)
--- 3) Relay 3s (still ensure holding)
--- 4) Repeat forever while Enabled
--- AA1: เปิดสวิตช์ค้างไว้แล้วรัน UI หลักใหม่ = ทำงานต่อทันที (ไม่ต้องกด Home)
+-- FIX: SaveGet/SaveSet รองรับทั้ง SAVE.get(...) และ SAVE:get(...)
+-- FIX: ยิง _sellStack แบบ path ตรงเหมือนโค้ดที่นายรันเอง
+-- Flow:
+--   Warmup 3s (BEFORE first sell)
+--   Loop: sellStack -> hold Box Stack 5s -> relay 3s -> repeat
+-- AA1: เปิดสวิตช์ค้างไว้ แล้วรัน UI หลักใหม่ = ทำงานต่อทันที (ไม่ต้องกด Home)
 
 ----------------------------------------------------------------------
--- 1) AA1 RUNNER (GLOBAL) — ทำงานทันทีตอนโหลดสคริปต์
+-- 1) AA1 RUNNER (GLOBAL)
 ----------------------------------------------------------------------
 do
     local Players = game:GetService("Players")
@@ -736,56 +735,79 @@ do
     local BASE_SCOPE = ("AA1/%s/%d/%d"):format(SYSTEM_NAME, GAME_ID, PLACE_ID)
 
     local function K(field) return BASE_SCOPE .. "/" .. field end
-    local function SaveGet(field, default)
-        local ok, v = pcall(function()
-            return SAVE.get(K(field), default)
-        end)
-        return ok and v or default
-    end
-    local function SaveSet(field, value)
-        pcall(function()
-            SAVE.set(K(field), value)
-        end)
+
+    -- ✅ รองรับทั้ง dot/colon (กัน SAVE ของจริงคนละทรง)
+    local function _saveGet(key, default)
+        if type(SAVE) ~= "table" then return default end
+        local fn = SAVE.get
+        if type(fn) == "function" then
+            -- ลองแบบ colon-style ก่อน: fn(self, key, default)
+            local ok1, v1 = pcall(fn, SAVE, key, default)
+            if ok1 then return v1 end
+            -- fallback dot-style: fn(key, default)
+            local ok2, v2 = pcall(fn, key, default)
+            if ok2 then return v2 end
+        end
+        if type(SAVE.get) == "function" then return default end
+        if type(SAVE.Get) == "function" then
+            local ok3, v3 = pcall(SAVE.Get, SAVE, key, default)
+            if ok3 then return v3 end
+        end
+        return default
     end
 
-    -- STATE
+    local function _saveSet(key, value)
+        if type(SAVE) ~= "table" then return end
+        local fn = SAVE.set
+        if type(fn) == "function" then
+            local ok1 = pcall(fn, SAVE, key, value) -- colon-style
+            if ok1 then return end
+            pcall(fn, key, value) -- dot-style
+            return
+        end
+        if type(SAVE.Set) == "function" then
+            pcall(SAVE.Set, SAVE, key, value)
+        end
+    end
+
+    local function SaveGet(field, default)
+        return _saveGet(K(field), default)
+    end
+
+    local function SaveSet(field, value)
+        _saveSet(K(field), value)
+    end
+
     local STATE = {
         Enabled  = SaveGet("Enabled", false),
-        HoldSec  = SaveGet("HoldSec", 5),  -- ถือของ 5 วิ
-        RelaySec = SaveGet("RelaySec", 3), -- รีเลย์ 3 วิ
+        HoldSec  = SaveGet("HoldSec", 5),
+        RelaySec = SaveGet("RelaySec", 3),
     }
 
-    -- Remote: _sellStack (ตามที่ให้มา 100%)
-    local cachedSellRemote
-    local function GetSellRemote()
-        if cachedSellRemote and cachedSellRemote.Parent then return cachedSellRemote end
-        cachedSellRemote =
-            ReplicatedStorage:WaitForChild("Modules")
-            :WaitForChild("Internals")
-            :WaitForChild("Skeleton")
-            :WaitForChild("Conduit")
-            :WaitForChild("Instances")
-            :WaitForChild("_sellStack")
-        return cachedSellRemote
-    end
-
-    -- ✅ ใช้รูปแบบ args แบบที่นายให้มา
+    -- ✅ args ตามที่นายให้มา
     local function MakeArgs()
-        local args = {
+        return {
             {
                 __raw = true,
                 data = {}
             }
         }
-        return args
     end
 
+    -- ✅ ยิง remote แบบ path ตรง “เหมือนโค้ดที่นายรันเอง”
     local function SellOnce()
         local args = MakeArgs()
-        GetSellRemote():FireServer(unpack(args))
+        ReplicatedStorage
+            :WaitForChild("Modules")
+            :WaitForChild("Internals")
+            :WaitForChild("Skeleton")
+            :WaitForChild("Conduit")
+            :WaitForChild("Instances")
+            :WaitForChild("_sellStack")
+            :FireServer(unpack(args))
     end
 
-    -- Box Stack helpers (prefix match: "Box Stack" / "Box Stack [..]")
+    -- Box Stack helpers
     local function getChar()
         return LP.Character
     end
@@ -838,7 +860,6 @@ do
         return (tool and isHolding(tool)) or false
     end
 
-    -- runner control (กันต้องกด Home)
     local loopToken = 0
     local running = false
 
@@ -854,12 +875,12 @@ do
         local myToken = loopToken
 
         task.spawn(function()
-            -- ✅ WARMUP 3s ก่อน sell ครั้งแรก
+            -- ✅ Warmup 3s ก่อนขายครั้งแรก (ระหว่างนี้คุมถือของด้วย)
             do
                 local warm = tonumber(STATE.RelaySec) or 3
                 if warm < 0 then warm = 0 end
-                local tWarmEnd = os.clock() + warm
-                while STATE.Enabled and loopToken == myToken and os.clock() < tWarmEnd do
+                local tEnd = os.clock() + warm
+                while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
                     ensureHoldingOnce()
                     task.wait(0.25)
                 end
@@ -869,29 +890,29 @@ do
                 -- 1) sellStack
                 pcall(SellOnce)
 
-                -- 2) hold 5 วิ
+                -- 2) hold 5s
                 local hold = tonumber(STATE.HoldSec) or 5
                 if hold < 0.2 then hold = 0.2 end
-                local tHoldEnd = os.clock() + hold
-                while STATE.Enabled and loopToken == myToken and os.clock() < tHoldEnd do
+                local tHold = os.clock() + hold
+                while STATE.Enabled and loopToken == myToken and os.clock() < tHold do
                     ensureHoldingOnce()
                     task.wait(0.25)
                 end
 
-                -- 3) relay 3 วิ
+                -- 3) relay 3s
                 local relay = tonumber(STATE.RelaySec) or 3
                 if relay < 0 then relay = 0 end
                 if relay > 0 then
-                    local tRelayEnd = os.clock() + relay
-                    while STATE.Enabled and loopToken == myToken and os.clock() < tRelayEnd do
+                    local tRelay = os.clock() + relay
+                    while STATE.Enabled and loopToken == myToken and os.clock() < tRelay do
                         ensureHoldingOnce()
                         task.wait(0.25)
                     end
                 end
 
-                -- 4) วนต่อ
                 task.wait(0.05)
             end
+
             running = false
         end)
     end
@@ -909,7 +930,6 @@ do
         end
     end
 
-    -- export
     _G.UFOX_AA1 = _G.UFOX_AA1 or {}
     _G.UFOX_AA1[SYSTEM_NAME] = {
         state        = STATE,
@@ -921,12 +941,11 @@ do
         saveSet      = SaveSet,
     }
 
-    -- ✅ AA1 auto-run ตอนโหลด (ไม่ต้องกด Home)
     task.defer(applyFromState)
 end
 
 ----------------------------------------------------------------------
--- 2) UI PART: Model A V1 ใน Tab Home (มีแค่รายการที่ 1) + sync กับ AA1
+-- 2) UI PART: Model A V1 ใน Tab Home (มีแค่รายการที่ 1)
 ----------------------------------------------------------------------
 registerRight("Home", function(scroll)
     local TweenService = game:GetService("TweenService")
@@ -961,13 +980,11 @@ registerRight("Home", function(scroll)
         ):Play()
     end
 
-    -- CLEANUP เฉพาะระบบนี้
     for _, name in ipairs({"CHS_Header","CHS_Row1"}) do
         local o = scroll:FindFirstChild(name)
         if o then o:Destroy() end
     end
 
-    -- UIListLayout (A V1)
     local vlist = scroll:FindFirstChildOfClass("UIListLayout")
     if not vlist then
         vlist = Instance.new("UIListLayout")
@@ -984,7 +1001,6 @@ registerRight("Home", function(scroll)
         end
     end
 
-    -- HEADER
     local header = Instance.new("TextLabel")
     header.Name = "CHS_Header"
     header.Parent = scroll
@@ -997,7 +1013,6 @@ registerRight("Home", function(scroll)
     header.Text = "Auto Collect Boxes 📦"
     header.LayoutOrder = base + 1
 
-    -- Row Switch (รายการที่ 1 เท่านั้น)
     local function makeRowSwitch(name, order, labelText, getState, setState)
         local row = Instance.new("Frame")
         row.Name = name
@@ -1069,7 +1084,6 @@ registerRight("Home", function(scroll)
         end
     end)
 
-    -- sync วิชวล
     task.defer(function()
         if AA1 and AA1.ensureRunner then AA1.ensureRunner() end
         if setVisual then
