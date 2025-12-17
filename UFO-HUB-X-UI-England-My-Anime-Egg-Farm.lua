@@ -1016,29 +1016,30 @@ registerRight("Home", function(scroll)
         end
     end)
 end)
---===== UFO HUB X • Home – Model A V1 + AA1 (GLOBAL RUNNER) Auto Egg Placement (Platforms/PlacementPrompt) =====
--- Flow: find Workspace.Platforms -> find ALL ProximityPrompt named "PlacementPrompt" -> fireproximityprompt all -> relay -> repeat
+--===== UFO HUB X • Home – Model A V1 + AA1 (GLOBAL RUNNER) Auto Egg Placement (_placeItem) =====
+-- Flow:
+--  1) Find Plot -> Platforms
+--  2) For each platform: if has Base.PlacementPrompt (enabled) then FireServer _placeItem with platform = platformName
+--  3) Step delay between platforms + Relay delay per round
 -- AA1: เปิดสวิตช์ค้างไว้ แล้วรัน UI หลักใหม่ = ทำงานต่อทันที (ไม่ต้องกดเข้า Home)
 
 ----------------------------------------------------------------------
--- 1) AA1 RUNNER (GLOBAL) — ทำงานทันทีตอนโหลดสคริปต์
+-- 1) AA1 RUNNER (GLOBAL)
 ----------------------------------------------------------------------
 do
     local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local Workspace = game:GetService("Workspace")
     local LP = Players.LocalPlayer
 
-    local SAVE = (getgenv and getgenv().UFOX_SAVE) or {
-        get = function(_, _, d) return d end,
-        set = function() end
-    }
+    local SAVE = (getgenv and getgenv().UFOX_SAVE) or { get=function(_,_,d) return d end, set=function() end }
 
-    local SYSTEM_NAME = "AutoEggPlacement"
+    local SYSTEM_NAME = "AutoEggPlacement_PlaceItem"
     local GAME_ID  = tonumber(game.GameId)  or 0
     local PLACE_ID = tonumber(game.PlaceId) or 0
     local BASE_SCOPE = ("AA1/%s/%d/%d"):format(SYSTEM_NAME, GAME_ID, PLACE_ID)
-
     local function K(field) return BASE_SCOPE .. "/" .. field end
+
     local function SaveGet(field, default)
         local ok, v = pcall(function() return SAVE.get(K(field), default) end)
         return ok and v or default
@@ -1047,47 +1048,111 @@ do
         pcall(function() SAVE.set(K(field), value) end)
     end
 
+    -- ✅ ตั้งค่าหลัก (แก้ได้ตรงนี้)
     local STATE = {
         Enabled  = SaveGet("Enabled", false),
-        RelaySec = SaveGet("RelaySec", 1.0),   -- รีเลย์หลักต่อรอบ (ปรับได้)
-        StepSec  = SaveGet("StepSec", 0.10),   -- หน่วงเบาๆ ระหว่างยิงแต่ละ prompt
-        HoldSec  = SaveGet("HoldSec", 0),      -- ถ้าพรอมพ์ต้อง hold ใส่เลข >0 ได้ (ส่วนใหญ่ 0 ก็พอ)
+
+        -- หน่วงระหว่างยิงแต่ละ Platform
+        StepSec  = SaveGet("StepSec", 0.15),
+
+        -- หน่วงต่อ “รอบ” (หลังยิงครบทุก platform แล้วค่อยวนใหม่)
+        RelaySec = SaveGet("RelaySec", 1.5),
+
+        -- ถ้าจะบังคับ PlotId เอง (เช่น "1") ใส่ได้ ไม่ใส่ = หาอัตโนมัติ
+        PlotId   = SaveGet("PlotId", ""),
+
+        -- ✅ ข้อมูลไข่ (ใช้ตามโค้ดที่ 1 ของนาย)
+        uuid     = SaveGet("uuid", "94f3b3a8-f0eb-4353-b703-c43fc33036ea"),
+        rarity   = SaveGet("rarity", "Epic"),
+        amount   = SaveGet("amount", 1),
+        tool_id  = SaveGet("tool_id", "entity_YuriZahard_egg"),
+        tool_type= SaveGet("tool_type", "egg"),
+        variety  = SaveGet("variety", "Normal"),
     }
 
-    local function getPlatforms()
-        local ok, p = pcall(function()
-            return Workspace:WaitForChild("Platforms", 3)
-        end)
-        return ok and p or nil
+    local function GetPlaceRemote()
+        return ReplicatedStorage
+            :WaitForChild("Modules")
+            :WaitForChild("Internals")
+            :WaitForChild("Skeleton")
+            :WaitForChild("Conduit")
+            :WaitForChild("Instances")
+            :WaitForChild("_placeItem")
     end
 
-    local function collectPlacementPrompts()
-        local platforms = getPlatforms()
-        if not platforms then return {} end
+    -- หา Plot ของผู้เล่นแบบ robust (ถ้าหาไม่เจอ fallback เป็น "1")
+    local function FindMyPlot()
+        local plots = Workspace:FindFirstChild("Plots")
+        if not plots then return nil end
 
-        local out = {}
-        for _, d in ipairs(platforms:GetDescendants()) do
-            if d:IsA("ProximityPrompt") and d.Name == "PlacementPrompt" then
-                table.insert(out, d)
+        -- 1) ถ้ามี PlotId ถูกบันทึกไว้
+        if typeof(STATE.PlotId) == "string" and STATE.PlotId ~= "" then
+            local p = plots:FindFirstChild(STATE.PlotId)
+            if p then return p end
+        end
+
+        -- 2) เดาโดย Attribute/Value ที่นิยมใช้
+        for _, p in ipairs(plots:GetChildren()) do
+            -- OwnerUserId / OwnerId / UserId
+            local a1 = p:GetAttribute("OwnerUserId") or p:GetAttribute("OwnerId") or p:GetAttribute("UserId")
+            if tonumber(a1) == tonumber(LP.UserId) then
+                return p
+            end
+
+            -- OwnerName
+            local a2 = p:GetAttribute("OwnerName")
+            if typeof(a2) == "string" and a2 == LP.Name then
+                return p
+            end
+
+            -- StringValue/IntValue Owner
+            local ov = p:FindFirstChild("Owner") or p:FindFirstChild("OwnerId") or p:FindFirstChild("OwnerUserId")
+            if ov and ov.Value ~= nil then
+                if tostring(ov.Value) == tostring(LP.UserId) or tostring(ov.Value) == LP.Name then
+                    return p
+                end
             end
         end
-        return out
+
+        -- 3) fallback
+        return plots:FindFirstChild("1") or plots:GetChildren()[1]
     end
 
-    local function firePrompt(prompt)
-        if not prompt or not prompt.Parent then return end
-        if prompt.Enabled == false then return end
+    local function GetPlatforms()
+        local plot = FindMyPlot()
+        if not plot then return nil end
+        return plot:FindFirstChild("Platforms")
+    end
 
-        local hold = tonumber(STATE.HoldSec) or 0
-        if hold < 0 then hold = 0 end
-
-        -- fireproximityprompt อยู่ฝั่ง client
-        local ok, err = pcall(function()
-            fireproximityprompt(prompt, hold)
-        end)
-        if not ok then
-            warn("[AA1 AutoEggPlacement] fireproximityprompt failed:", err)
+    local function IsPlatformPlaceable(platformFolder)
+        -- ขอให้ตรงตามที่นายดูใน Explorer: Platforms[x].Base.PlacementPrompt
+        local base = platformFolder:FindFirstChild("Base")
+        if not base then return false end
+        local prompt = base:FindFirstChild("PlacementPrompt")
+        if prompt and prompt:IsA("ProximityPrompt") then
+            if prompt.Enabled == false then return false end
+            return true
         end
+        -- บางแมพอาจไม่มี prompt แต่ place remote ได้อยู่
+        return true
+    end
+
+    local function PlaceAtPlatform(platformName)
+        local args = {
+            {
+                __raw = true,
+                data = {
+                    uuid = STATE.uuid,
+                    rarity = STATE.rarity,
+                    amount = tonumber(STATE.amount) or 1,
+                    platform = tostring(platformName),
+                    tool_id = STATE.tool_id,
+                    tool_type = STATE.tool_type,
+                    variety = STATE.variety,
+                }
+            }
+        }
+        GetPlaceRemote():FireServer(unpack(args))
     end
 
     local loopToken = 0
@@ -1106,26 +1171,40 @@ do
 
         task.spawn(function()
             while STATE.Enabled and loopToken == myToken do
-                -- 1) ยิง PlacementPrompt ทุกอัน
-                local prompts = collectPlacementPrompts()
-                local step = tonumber(STATE.StepSec) or 0.1
-                if step < 0 then step = 0 end
+                local platforms = GetPlatforms()
 
-                for _, p in ipairs(prompts) do
-                    if not (STATE.Enabled and loopToken == myToken) then break end
-                    firePrompt(p)
-                    if step > 0 then task.wait(step) end
+                if platforms then
+                    local children = platforms:GetChildren()
+                    table.sort(children, function(a,b)
+                        return tostring(a.Name) < tostring(b.Name)
+                    end)
+
+                    local step = tonumber(STATE.StepSec) or 0.15
+                    if step < 0 then step = 0 end
+
+                    for _, pf in ipairs(children) do
+                        if not (STATE.Enabled and loopToken == myToken) then break end
+
+                        if pf and pf.Parent and IsPlatformPlaceable(pf) then
+                            local ok, err = pcall(function()
+                                PlaceAtPlatform(pf.Name)
+                            end)
+                            if not ok then
+                                warn("[AutoEggPlacement] _placeItem failed:", err)
+                            end
+                            if step > 0 then task.wait(step) end
+                        end
+                    end
                 end
 
-                -- 2) รีเลย์ต่อรอบ
-                local relay = tonumber(STATE.RelaySec) or 1.0
+                local relay = tonumber(STATE.RelaySec) or 1.5
                 if relay < 0.05 then relay = 0.05 end
-
                 local tEnd = os.clock() + relay
                 while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
                     task.wait(0.1)
                 end
             end
+
             running = false
         end)
     end
@@ -1134,7 +1213,6 @@ do
         v = v and true or false
         STATE.Enabled = v
         SaveSet("Enabled", v)
-
         if v then
             task.defer(applyFromState)
         else
@@ -1154,7 +1232,7 @@ do
         saveSet      = SaveSet,
     }
 
-    -- ✅ Auto-run ตอนโหลด (ถ้าเปิดสวิตช์ค้างไว้ จะทำงานทันที)
+    -- ✅ Auto-run ตอนโหลด
     task.defer(applyFromState)
 end
 
@@ -1163,7 +1241,7 @@ end
 ----------------------------------------------------------------------
 registerRight("Home", function(scroll)
     local TweenService = game:GetService("TweenService")
-    local AA1 = _G.UFOX_AA1 and _G.UFOX_AA1["AutoEggPlacement"]
+    local AA1 = _G.UFOX_AA1 and _G.UFOX_AA1["AutoEggPlacement_PlaceItem"]
 
     local THEME = {
         GREEN = Color3.fromRGB(25,255,125),
@@ -1187,11 +1265,7 @@ registerRight("Home", function(scroll)
     end
 
     local function tween(o, p, d)
-        TweenService:Create(
-            o,
-            TweenInfo.new(d or 0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            p
-        ):Play()
+        TweenService:Create(o, TweenInfo.new(d or 0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), p):Play()
     end
 
     -- CLEANUP เฉพาะระบบนี้
@@ -1200,7 +1274,7 @@ registerRight("Home", function(scroll)
         if o then o:Destroy() end
     end
 
-    -- UIListLayout (A V1) + base LayoutOrder (dynamic)
+    -- UIListLayout (A V1) — ต้องมีอันเดียว
     local vlist = scroll:FindFirstChildOfClass("UIListLayout")
     if not vlist then
         vlist = Instance.new("UIListLayout")
@@ -1210,6 +1284,7 @@ registerRight("Home", function(scroll)
     end
     scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 
+    -- base LayoutOrder dynamic (max+1)
     local base = 0
     for _, ch in ipairs(scroll:GetChildren()) do
         if ch:IsA("GuiObject") and ch ~= vlist then
@@ -1293,10 +1368,11 @@ registerRight("Home", function(scroll)
         return update
     end
 
+    -- Row1 (ไม่มี emoji ตามที่ขอ)
     local setVisual = makeRowSwitch(
         "AEP_Row1",
         base + 1,
-        "Auto Egg Placement", -- ✅ รายการที่ 1 ไม่มี emoji
+        "วางไข่ออโต้",
         function()
             return (AA1 and AA1.getEnabled and AA1.getEnabled()) or false
         end,
