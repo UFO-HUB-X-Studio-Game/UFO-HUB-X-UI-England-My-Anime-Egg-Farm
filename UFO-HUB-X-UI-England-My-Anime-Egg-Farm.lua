@@ -4074,12 +4074,12 @@ registerRight("Quest", function(scroll)
         end
     end)
 end)
---===== UFO HUB X • Home – Model A V1 + AA1 Auto Box Seller (First Instant, Then 5s Each Loop) =====
+--===== UFO HUB X • Shop – Model A V1 + AA1 Auto Box Seller (1-5 No Delay, 6+ Wait 5s Each) =====
 -- Header: "Auto Box Seller 💰📦"
 -- Row1:   "Auto Box Seller" (no emoji)
 -- Action: _sellStack:FireServer(unpack(args)) loop
--- Rule: 1st sell = no wait, 2nd+ = wait 5 seconds every time (keeps looping)
--- AA1: if Enabled already true, auto-run on load without opening Home
+-- Rule: Sell #1–#5 = NO 5s delay, Sell #6+ = wait 5s before each sell (keeps looping)
+-- AA1: if Enabled already true, auto-run on load without opening Shop
 
 registerRight("Shop", function(scroll)
     local TweenService = game:GetService("TweenService")
@@ -4143,9 +4143,9 @@ registerRight("Shop", function(scroll)
     end
 
     ------------------------------------------------------------------------
-    -- CLEANUP เฉพาะระบบนี้
+    -- CLEANUP เฉพาะระบบนี้ (Shop)
     ------------------------------------------------------------------------
-    for _, name in ipairs({"ABS_Header","ABS_Row1"}) do
+    for _, name in ipairs({"ABS_S_Header","ABS_S_Row1"}) do
         local o = scroll:FindFirstChild(name)
         if o then o:Destroy() end
     end
@@ -4173,7 +4173,7 @@ registerRight("Shop", function(scroll)
     -- HEADER (English + emoji)
     ------------------------------------------------------------------------
     local header = Instance.new("TextLabel")
-    header.Name = "ABS_Header"
+    header.Name = "ABS_S_Header"
     header.Parent = scroll
     header.BackgroundTransparency = 1
     header.Size = UDim2.new(1, 0, 0, 36)
@@ -4218,8 +4218,9 @@ registerRight("Shop", function(scroll)
     ------------------------------------------------------------------------
     local STATE = {
         Enabled   = SaveGet("Enabled", false),
-        Interval  = SaveGet("Interval", 0.35), -- กันสแปม/กัน error spam (ไม่เกี่ยวกับดีเลย์ 5 วิ)
-        DelaySec  = SaveGet("DelaySec", 5),    -- ✅ รอ 5 วิทุกครั้ง "ยกเว้นครั้งแรก"
+        Interval  = SaveGet("Interval", 0.35), -- กันสแปม/กัน error spam
+        DelaySec  = SaveGet("DelaySec", 5),    -- ดีเลย์ 5 วิสำหรับ sell #6+
+        FreeCount = SaveGet("FreeCount", 5),   -- ✅ #1-#5 ไม่ต้องรอ
     }
 
     local loopToken = 0
@@ -4235,11 +4236,11 @@ registerRight("Shop", function(scroll)
         if not STATE.Enabled then return end
 
         task.spawn(function()
-            local firstRun = true
+            local sellCount = 0
 
             while STATE.Enabled and loopToken == myToken do
-                -- ✅ ครั้งแรกไม่ต้องรอ, ครั้งถัดไปค่อยรอ 5 วิ
-                if not firstRun then
+                -- ✅ Sell #1-#5 ไม่รอ 5 วิ, ตั้งแต่ #6 เป็นต้นไป รอ 5 วิทุกครั้ง
+                if sellCount >= (tonumber(STATE.FreeCount) or 5) then
                     local d = tonumber(STATE.DelaySec) or 5
                     if d > 0 then
                         local tEnd = os.clock() + d
@@ -4255,7 +4256,7 @@ registerRight("Shop", function(scroll)
                     warn("[AA1 AutoBoxSeller] FireServer failed:", err)
                     task.wait(0.6)
                 else
-                    firstRun = false
+                    sellCount += 1
                     local dt = tonumber(STATE.Interval) or 0.35
                     if dt < 0.10 then dt = 0.10 end
                     task.wait(dt)
@@ -4273,7 +4274,7 @@ registerRight("Shop", function(scroll)
         end
     end
 
-    -- AA1 auto-run ตอนโหลด
+    -- AA1 auto-run ตอนโหลด (ไม่ต้องกดปุ่ม Shop)
     task.defer(applyFromState)
 
     ------------------------------------------------------------------------
@@ -4341,7 +4342,7 @@ registerRight("Shop", function(scroll)
         return row
     end
 
-    makeRowSwitch("ABS_Row1", base + 2, "Auto Box Seller", function()
+    makeRowSwitch("ABS_S_Row1", base + 2, "Auto Box Seller", function()
         return STATE.Enabled
     end, function(v)
         SetEnabled(v)
