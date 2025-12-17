@@ -4141,41 +4141,221 @@ registerRight("Quest", function(scroll)
         end
     end)
 end)
---===== UFO HUB X • Shop – Model A V1 + AA1 Auto Box Seller (1-5 No Delay, 6+ Wait 5s Each) =====
--- Header: "Auto Box Seller 💰📦"
--- Row1:   "Auto Box Seller" (no emoji)
--- Action: _sellStack:FireServer(unpack(args)) loop
--- Rule: Sell #1–#5 = NO 5s delay, Sell #6+ = wait 5s before each sell (keeps looping)
--- AA1: if Enabled already true, auto-run on load without opening Shop
+--===== UFO HUB X • Shop – Model A V1 + AA1 Auto Collect + Hold (5s Loop, Global Auto-Run) =====
+-- Tab: Shop
+-- Header: "Auto Collect & Hold 💰📦"
+-- Row1:   "Auto Collect & Hold" (no emoji)
+-- Flow loop (Enabled):
+--   1) _collectEarnings:FireServer(unpack(args))
+--   2) Equip "Box Stack" (prefix match: "Box Stack" / "Box Stack [..]")
+--   3) Hold for 5 seconds (re-equip if it drops)
+--   4) Repeat forever
+-- AA1: if switch was ON, re-run main UI -> auto starts WITHOUT clicking Shop
 
-registerRight("Shop", function(scroll)
-    local TweenService = game:GetService("TweenService")
+----------------------------------------------------------------------
+-- 1) AA1 RUNNER (GLOBAL) — รันทันทีตอนโหลดสคริปต์
+----------------------------------------------------------------------
+do
+    local Players = game:GetService("Players")
+    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+    local TweenService = game:GetService("TweenService") -- (ไว้ให้ระบบอื่น แต่ไม่จำเป็น)
 
-    ------------------------------------------------------------------------
-    -- AA1 SAVE (getgenv().UFOX_SAVE) + Scope
-    ------------------------------------------------------------------------
+    local LP = Players.LocalPlayer
+
+    -- SAVE (getgenv().UFOX_SAVE)
     local SAVE = (getgenv and getgenv().UFOX_SAVE) or {
         get = function(_, _, d) return d end,
-        set = function() end
+        set = function() end,
     }
 
-    local SYSTEM_NAME = "AutoBoxSeller"
+    local SYSTEM_NAME = "ShopAutoCollectHold"
     local GAME_ID  = tonumber(game.GameId)  or 0
     local PLACE_ID = tonumber(game.PlaceId) or 0
     local BASE_SCOPE = ("AA1/%s/%d/%d"):format(SYSTEM_NAME, GAME_ID, PLACE_ID)
 
     local function K(field) return BASE_SCOPE .. "/" .. field end
+
     local function SaveGet(field, default)
         local ok, v = pcall(function()
             return SAVE.get(K(field), default)
         end)
         return ok and v or default
     end
+
     local function SaveSet(field, value)
         pcall(function()
             SAVE.set(K(field), value)
         end)
     end
+
+    -- STATE
+    local STATE = {
+        Enabled  = SaveGet("Enabled", false),
+        WaitSec  = SaveGet("WaitSec", 5), -- รอ 5 วิ
+    }
+
+    -- Remote: _collectEarnings (ตามที่ให้มา 100%)
+    local cachedCollect
+    local function GetCollectRemote()
+        if cachedCollect and cachedCollect.Parent then return cachedCollect end
+        cachedCollect =
+            ReplicatedStorage:WaitForChild("Modules")
+            :WaitForChild("Internals")
+            :WaitForChild("Skeleton")
+            :WaitForChild("Conduit")
+            :WaitForChild("Instances")
+            :WaitForChild("_collectEarnings")
+        return cachedCollect
+    end
+
+    local function MakeArgs()
+        return {
+            {
+                __raw = true,
+                data = {}
+            }
+        }
+    end
+
+    -- Box Stack helpers
+    local function getChar()
+        return LP.Character
+    end
+
+    local function getHumanoid()
+        local ch = getChar()
+        if not ch then return nil end
+        return ch:FindFirstChildOfClass("Humanoid")
+    end
+
+    -- prefix match รองรับ "Box Stack [66m]"
+    local function findBoxStack(container)
+        if not container then return nil end
+        for _, obj in ipairs(container:GetChildren()) do
+            if obj:IsA("Tool") and typeof(obj.Name) == "string" and obj.Name:sub(1, 9) == "Box Stack" then
+                return obj
+            end
+        end
+        return nil
+    end
+
+    local function getBoxStackAnywhere()
+        local bp = LP:FindFirstChild("Backpack")
+        local ch = getChar()
+        return findBoxStack(bp) or findBoxStack(ch)
+    end
+
+    local function isHolding(tool)
+        if not tool or not tool.Parent then return false end
+        local ch = getChar()
+        if ch and tool.Parent == ch then return true end
+        if tool.Parent.Name == LP.Name then return true end
+        return false
+    end
+
+    local function equip(tool)
+        local hum = getHumanoid()
+        if not hum or not tool then return false end
+        local ok = pcall(function()
+            hum:EquipTool(tool)
+        end)
+        return ok
+    end
+
+    local function ensureHoldingOnce()
+        local tool = getBoxStackAnywhere()
+        if not tool then return false end
+        if isHolding(tool) then return true end
+        equip(tool)
+        task.wait(0.08)
+        tool = getBoxStackAnywhere()
+        return (tool and isHolding(tool)) or false
+    end
+
+    -- runner control
+    local loopToken = 0
+    local running = false
+
+    local function collectOnce()
+        local args = MakeArgs()
+        GetCollectRemote():FireServer(unpack(args))
+    end
+
+    local function applyFromState()
+        if not STATE.Enabled then
+            running = false
+            return
+        end
+
+        -- กันซ้อน
+        if running then return end
+        running = true
+
+        loopToken += 1
+        local myToken = loopToken
+
+        task.spawn(function()
+            while STATE.Enabled and loopToken == myToken do
+                -- 1) collectEarnings ก่อน
+                pcall(collectOnce)
+
+                -- 2) ถือของ (พยายาม equip)
+                ensureHoldingOnce()
+
+                -- 3) รอ 5 วิ และระหว่างนั้นถ้าหลุดให้ equip ซ้ำ
+                local w = tonumber(STATE.WaitSec) or 5
+                if w < 0.2 then w = 0.2 end
+
+                local tEnd = os.clock() + w
+                while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
+                    ensureHoldingOnce()
+                    task.wait(0.25)
+                end
+            end
+            running = false
+        end)
+    end
+
+    local function SetEnabled(v)
+        v = v and true or false
+        STATE.Enabled = v
+        SaveSet("Enabled", v)
+
+        if v then
+            task.defer(applyFromState)
+        else
+            loopToken += 1
+            running = false
+        end
+    end
+
+    -- EXPORT
+    _G.UFOX_AA1 = _G.UFOX_AA1 or {}
+    _G.UFOX_AA1[SYSTEM_NAME] = {
+        state       = STATE,
+        apply       = applyFromState,
+        setEnabled  = SetEnabled,
+        getEnabled  = function() return STATE.Enabled == true end,
+        saveGet     = SaveGet,
+        saveSet     = SaveSet,
+        ensureRunner = function()
+            task.defer(applyFromState)
+        end
+    }
+
+    -- ✅ AA1 Auto-Run ทันทีตอนโหลดสคริปต์ (ไม่ต้องกด Shop)
+    task.defer(function()
+        applyFromState()
+    end)
+end
+
+----------------------------------------------------------------------
+-- 2) UI PART: Model A V1 ใน Tab Shop (แค่ทำ UI + sync กับ AA1)
+----------------------------------------------------------------------
+registerRight("Shop", function(scroll)
+    local TweenService = game:GetService("TweenService")
+    local AA1 = _G.UFOX_AA1 and _G.UFOX_AA1["ShopAutoCollectHold"]
+    local STATE = (AA1 and AA1.state) or { Enabled=false }
 
     ------------------------------------------------------------------------
     -- THEME + HELPERS (Model A V1)
@@ -4210,15 +4390,18 @@ registerRight("Shop", function(scroll)
     end
 
     ------------------------------------------------------------------------
-    -- CLEANUP เฉพาะระบบนี้ (Shop)
+    -- CLEANUP เฉพาะระบบนี้
     ------------------------------------------------------------------------
-    for _, name in ipairs({"ABS_S_Header","ABS_S_Row1"}) do
+    for _, name in ipairs({"SCH_Header","SCH_Row1"}) do
         local o = scroll:FindFirstChild(name)
+            or scroll.Parent:FindFirstChild(name)
+            or (scroll:FindFirstAncestorOfClass("ScreenGui")
+                and scroll:FindFirstAncestorOfClass("ScreenGui"):FindFirstChild(name))
         if o then o:Destroy() end
     end
 
     ------------------------------------------------------------------------
-    -- UIListLayout (Model A V1 rules)
+    -- UIListLayout (A V1) + base LayoutOrder = max child + 1
     ------------------------------------------------------------------------
     local vlist = scroll:FindFirstChildOfClass("UIListLayout")
     if not vlist then
@@ -4240,7 +4423,7 @@ registerRight("Shop", function(scroll)
     -- HEADER (English + emoji)
     ------------------------------------------------------------------------
     local header = Instance.new("TextLabel")
-    header.Name = "ABS_S_Header"
+    header.Name = "SCH_Header"
     header.Parent = scroll
     header.BackgroundTransparency = 1
     header.Size = UDim2.new(1, 0, 0, 36)
@@ -4248,101 +4431,8 @@ registerRight("Shop", function(scroll)
     header.TextSize = 16
     header.TextColor3 = THEME.WHITE
     header.TextXAlignment = Enum.TextXAlignment.Left
-    header.Text = "Auto Box Seller 💰📦"
+    header.Text = "Auto Collect & Hold 💰📦"
     header.LayoutOrder = base + 1
-
-    ------------------------------------------------------------------------
-    -- REMOTE + ARGS (ตามที่ให้มา 100%)
-    ------------------------------------------------------------------------
-    local cachedSellRemote
-    local function GetSellRemote()
-        if cachedSellRemote and cachedSellRemote.Parent then
-            return cachedSellRemote
-        end
-        local rs = game:GetService("ReplicatedStorage")
-        cachedSellRemote =
-            rs:WaitForChild("Modules")
-              :WaitForChild("Internals")
-              :WaitForChild("Skeleton")
-              :WaitForChild("Conduit")
-              :WaitForChild("Instances")
-              :WaitForChild("_sellStack")
-        return cachedSellRemote
-    end
-
-    local function MakeArgs()
-        local args = {
-            {
-                __raw = true,
-                data = {}
-            }
-        }
-        return args
-    end
-
-    ------------------------------------------------------------------------
-    -- STATE + LOOP (AA1)
-    ------------------------------------------------------------------------
-    local STATE = {
-        Enabled   = SaveGet("Enabled", false),
-        Interval  = SaveGet("Interval", 0.35), -- กันสแปม/กัน error spam
-        DelaySec  = SaveGet("DelaySec", 5),    -- ดีเลย์ 5 วิสำหรับ sell #6+
-        FreeCount = SaveGet("FreeCount", 5),   -- ✅ #1-#5 ไม่ต้องรอ
-    }
-
-    local loopToken = 0
-
-    local function SellOnce()
-        local args = MakeArgs()
-        GetSellRemote():FireServer(unpack(args))
-    end
-
-    local function applyFromState()
-        loopToken += 1
-        local myToken = loopToken
-        if not STATE.Enabled then return end
-
-        task.spawn(function()
-            local sellCount = 0
-
-            while STATE.Enabled and loopToken == myToken do
-                -- ✅ Sell #1-#5 ไม่รอ 5 วิ, ตั้งแต่ #6 เป็นต้นไป รอ 5 วิทุกครั้ง
-                if sellCount >= (tonumber(STATE.FreeCount) or 5) then
-                    local d = tonumber(STATE.DelaySec) or 5
-                    if d > 0 then
-                        local tEnd = os.clock() + d
-                        while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
-                            task.wait(0.1)
-                        end
-                    end
-                end
-                if not (STATE.Enabled and loopToken == myToken) then return end
-
-                local ok, err = pcall(SellOnce)
-                if not ok then
-                    warn("[AA1 AutoBoxSeller] FireServer failed:", err)
-                    task.wait(0.6)
-                else
-                    sellCount += 1
-                    local dt = tonumber(STATE.Interval) or 0.35
-                    if dt < 0.10 then dt = 0.10 end
-                    task.wait(dt)
-                end
-            end
-        end)
-    end
-
-    local function SetEnabled(v)
-        STATE.Enabled = v and true or false
-        SaveSet("Enabled", STATE.Enabled)
-        task.defer(applyFromState)
-        if not STATE.Enabled then
-            loopToken += 1
-        end
-    end
-
-    -- AA1 auto-run ตอนโหลด (ไม่ต้องกดปุ่ม Shop)
-    task.defer(applyFromState)
 
     ------------------------------------------------------------------------
     -- Row Switch (Model A V1)
@@ -4406,17 +4496,28 @@ registerRight("Shop", function(scroll)
         end)
 
         update(getState())
-        return row
+        return { row=row, set=update }
     end
 
-    makeRowSwitch("ABS_S_Row1", base + 2, "Auto Box Seller", function()
-        return STATE.Enabled
+    local sw1 = makeRowSwitch("SCH_Row1", base + 2, "Auto Collect & Hold", function()
+        return (AA1 and AA1.getEnabled and AA1.getEnabled()) or (STATE.Enabled == true)
     end, function(v)
-        SetEnabled(v)
+        if AA1 and AA1.setEnabled then
+            AA1.setEnabled(v)
+            if v and AA1.ensureRunner then AA1.ensureRunner() end
+        else
+            STATE.Enabled = (v == true)
+        end
     end)
 
-    _G.UFOX_AA1 = _G.UFOX_AA1 or {}
-    _G.UFOX_AA1[SYSTEM_NAME] = { state = STATE, apply = applyFromState, setEnabled = SetEnabled }
+    -- INIT SYNC + (ถ้าเปิดอยู่) ensureRunner
+    task.defer(function()
+        if AA1 and AA1.ensureRunner then
+            AA1.ensureRunner()
+        end
+        local on = (AA1 and AA1.getEnabled and AA1.getEnabled()) or (STATE.Enabled == true)
+        if sw1 and sw1.set then sw1.set(on) end
+    end)
 end)
 --===== UFO HUB X • Shop – Auto Buy Pickaxe & Miners + Auto Buy Auras + Auto Buy Map (Model A V1 + AA1) =====
 -- Tab: Shop
