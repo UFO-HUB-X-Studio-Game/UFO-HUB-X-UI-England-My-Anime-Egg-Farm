@@ -709,14 +709,10 @@ registerRight("Quest", function(scroll) end)
 registerRight("Shop", function(scroll) end)
 registerRight("Settings", function(scroll) end)
 --===== UFO HUB X • Home – Model A V1 + AA1 Auto Box Stack Keeper =====
--- Header: "Auto Box Stack Keeper 📦🧠"
--- Row1:   "Auto Box Stack Keeper" (no emoji)
--- Logic:
---  - Find Tool named "Box Stack" in Player.Backpack / Player.Character
---  - If Parent is "Backpack" => not holding
---  - If Parent is player name / Character => holding
---  - Hold for 5 minutes, keep re-equipping if it slips
---  - AA1: if switch was ON, re-run main script => auto starts without opening Home
+-- Header (English + emoji): "Auto Box Stack Keeper 📦🧠"
+-- Row1  (English, no emoji): "Auto Box Stack Keeper"
+-- Success rule: Box Stack must DISAPPEAR from Backpack (Backpack no longer contains it) => holding success
+-- Then keep holding for 5 minutes; if it comes back, re-activate again.
 
 registerRight("Home", function(scroll)
     local TweenService = game:GetService("TweenService")
@@ -809,7 +805,7 @@ registerRight("Home", function(scroll)
     end
 
     ------------------------------------------------------------------------
-    -- HEADER (English + emoji)
+    -- HEADER
     ------------------------------------------------------------------------
     local header = Instance.new("TextLabel")
     header.Name = "BS_Header"
@@ -828,98 +824,128 @@ registerRight("Home", function(scroll)
     ------------------------------------------------------------------------
     local STATE = {
         Enabled = SaveGet("Enabled", false),
-        HoldSec = SaveGet("HoldSec", 300), -- 5 minutes = 300 seconds
+        HoldSec = SaveGet("HoldSec", 300), -- 5 minutes
     }
 
     local loopToken = 0
 
+    local function getBackpack()
+        return LP:FindFirstChild("Backpack")
+    end
+
+    local function getChar()
+        return LP.Character
+    end
+
     local function getHumanoid()
-        local ch = LP.Character
+        local ch = getChar()
         if not ch then return nil end
         return ch:FindFirstChildOfClass("Humanoid")
     end
 
-    local function findBoxStack()
-        local backpack = LP:FindFirstChild("Backpack")
-        local ch = LP.Character
+    local function findBoxStackInBackpack()
+        local bp = getBackpack()
+        if not bp then return nil end
+        return bp:FindFirstChild("Box Stack")
+    end
 
-        local tool
-        if backpack then
-            tool = backpack:FindFirstChild("Box Stack")
-            if tool then return tool end
-        end
-        if ch then
-            tool = ch:FindFirstChild("Box Stack")
-            if tool then return tool end
-        end
+    local function findBoxStackAnywhere()
+        local bp = getBackpack()
+        local ch = getChar()
+        if bp and bp:FindFirstChild("Box Stack") then return bp:FindFirstChild("Box Stack") end
+        if ch and ch:FindFirstChild("Box Stack") then return ch:FindFirstChild("Box Stack") end
         return nil
     end
 
-    local function isHolding(tool)
-        if not tool or not tool.Parent then return false end
-        -- ตามสเปกนาย: Parent == Backpack => not holding
-        if tool.Parent.Name == "Backpack" then
-            return false
-        end
-        -- ถ้า Parent เป็นชื่อผู้เล่น (Character name = player.Name โดยปกติ) => holding
-        if tool.Parent.Name == LP.Name then
-            return true
-        end
-        -- fallback: ถ้าอยู่ใน Character ก็ถือว่า holding
-        if LP.Character and tool.Parent == LP.Character then
-            return true
-        end
-        return false
+    local function backpackHasBoxStack()
+        return findBoxStackInBackpack() ~= nil
+    end
+
+    -- ✅ เงื่อนไขสำเร็จตามที่ M บอก: "Box Stack หายไปจาก Backpack" = ถือกล่องแล้ว
+    local function holdingByDisappearRule()
+        return not backpackHasBoxStack()
     end
 
     local function equipTool(tool)
         local hum = getHumanoid()
-        if not hum then return false end
-        if not tool then return false end
+        if not hum or not tool then return false end
         local ok = pcall(function()
             hum:EquipTool(tool)
         end)
         return ok
     end
 
-    local function unequipAll()
-        local hum = getHumanoid()
-        if not hum then return end
-        pcall(function()
-            hum:UnequipTools()
+    local function activateTool(tool)
+        if not tool then return false end
+        local ok = pcall(function()
+            tool:Activate()
         end)
+        return ok
     end
 
-    local function runOneHoldCycle(myToken)
-        -- 1) หา tool
-        local tool = findBoxStack()
-        if not tool then
-            -- ยังไม่เจอ => รอแล้ววนใหม่ใน loop หลัก
-            return
+    local function tryMakeItDisappear(timeoutSec)
+        -- 1) ต้องมีใน Backpack ก่อน
+        local tool = findBoxStackInBackpack()
+        if not tool then return false end
+
+        -- 2) Equip
+        equipTool(tool)
+
+        -- 3) รอให้ย้ายเข้า Character (ถ้าเกมย้าย)
+        local t0 = os.clock()
+        while os.clock() - t0 < 1.2 do
+            tool = findBoxStackAnywhere()
+            if tool and getChar() and tool.Parent == getChar() then
+                break
+            end
+            task.wait(0.05)
         end
 
-        -- 2) ถ้าไม่ได้ถือ ให้ equip
-        if not isHolding(tool) then
-            equipTool(tool)
-            task.wait(0.15)
-        end
+        -- 4) Activate ให้ระบบถือของทำงาน
+        tool = findBoxStackAnywhere() or tool
+        activateTool(tool)
 
-        -- 3) ถือค้าง 5 นาที (ถ้าหลุดระหว่างทาง ให้ re-equip)
+        -- 5) รอจน "หายจาก Backpack"
+        local endT = os.clock() + (timeoutSec or 2.5)
+        while os.clock() < endT do
+            if holdingByDisappearRule() then
+                return true
+            end
+            task.wait(0.05)
+        end
+        return holdingByDisappearRule()
+    end
+
+    local function runHoldLoop(myToken)
         local hold = tonumber(STATE.HoldSec) or 300
         if hold < 5 then hold = 5 end
 
-        local t0 = os.clock()
-        while STATE.Enabled and loopToken == myToken and (os.clock() - t0) < hold do
-            tool = tool.Parent and tool or findBoxStack()
-            if tool and not isHolding(tool) then
-                equipTool(tool)
-            end
-            task.wait(0.35)
-        end
+        local heldTime = 0
+        local lastTick = os.clock()
 
-        -- 4) ครบเวลาแล้ว -> ปล่อยของ (optional แต่ตรง concept “hold for 5 minutes”)
-        if STATE.Enabled and loopToken == myToken then
-            unequipAll()
+        while STATE.Enabled and loopToken == myToken do
+            local now = os.clock()
+            local dt = now - lastTick
+            lastTick = now
+
+            if holdingByDisappearRule() then
+                heldTime += dt
+                if heldTime >= hold then
+                    -- ครบ 5 นาทีแล้ว จบ 1 รอบ (จะเริ่มรอบใหม่ถ้ายังเปิดอยู่)
+                    return
+                end
+                task.wait(0.25)
+            else
+                -- ยังไม่ถือ (เพราะ Box Stack ยังอยู่ใน Backpack) -> ทำให้มันหายไป
+                local ok = pcall(function()
+                    tryMakeItDisappear(3.0)
+                end)
+                if not ok then
+                    task.wait(0.4)
+                else
+                    task.wait(0.15)
+                end
+            end
         end
     end
 
@@ -930,7 +956,7 @@ registerRight("Home", function(scroll)
 
         task.spawn(function()
             while STATE.Enabled and loopToken == myToken do
-                pcall(runOneHoldCycle, myToken)
+                pcall(runHoldLoop, myToken)
                 task.wait(0.5)
             end
         end)
@@ -941,13 +967,11 @@ registerRight("Home", function(scroll)
         SaveSet("Enabled", STATE.Enabled)
         task.defer(applyFromState)
         if not STATE.Enabled then
-            -- ปิดแล้วหยุด + ปล่อยของ
             loopToken += 1
-            unequipAll()
         end
     end
 
-    -- AA1: auto-run ตอนโหลด
+    -- AA1 auto-run
     task.defer(applyFromState)
 
     ------------------------------------------------------------------------
@@ -1015,7 +1039,6 @@ registerRight("Home", function(scroll)
         return row
     end
 
-    -- Row1 (English, no emoji)
     makeRowSwitch("BS_Row1", base + 2, "Auto Box Stack Keeper", function()
         return STATE.Enabled
     end, function(v)
@@ -1023,15 +1046,13 @@ registerRight("Home", function(scroll)
     end)
 
     ------------------------------------------------------------------------
-    -- Export (optional)
+    -- Export
     ------------------------------------------------------------------------
     _G.UFOX_AA1 = _G.UFOX_AA1 or {}
     _G.UFOX_AA1[SYSTEM_NAME] = {
         state      = STATE,
         apply      = applyFromState,
         setEnabled = SetEnabled,
-        saveGet    = function(field, def) return SaveGet(field, def) end,
-        saveSet    = function(field, val) SaveSet(field, val) end,
     }
 end)
 --===== UFO HUB X • Home – Auto Rebirth (AA1 Runner + Model A V1 + A V2) =====
