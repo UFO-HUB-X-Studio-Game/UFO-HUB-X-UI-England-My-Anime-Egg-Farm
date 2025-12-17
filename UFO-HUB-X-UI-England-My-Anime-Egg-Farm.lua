@@ -708,83 +708,58 @@ registerRight("Home", function(scroll) end)
 registerRight("Quest", function(scroll) end)
 registerRight("Shop", function(scroll) end)
 registerRight("Settings", function(scroll) end)
---===== UFO HUB X • Home – Model A V1 + AA1 (GLOBAL RUNNER) Auto Collect Boxes (sellStack) -> Hold 5s -> Relay 3s (Loop) =====
--- FIX: SaveGet/SaveSet รองรับทั้ง SAVE.get(...) และ SAVE:get(...)
--- FIX: ยิง _sellStack แบบ path ตรงเหมือนโค้ดที่นายรันเอง
+--===== UFO HUB X • Home – Model A V1 + AA1 (GLOBAL RUNNER) Auto Box Collector (sellStack -> Hold 5s -> Relay 3s) =====
 -- Flow:
---   Warmup 3s (BEFORE first sell)
---   Loop: sellStack -> hold Box Stack 5s -> relay 3s -> repeat
--- AA1: เปิดสวิตช์ค้างไว้ แล้วรัน UI หลักใหม่ = ทำงานต่อทันที (ไม่ต้องกด Home)
+--   Warmup 3s BEFORE first sell
+--   Loop: _sellStack -> Hold "Box Stack" 5s -> Relay 3s -> repeat
+-- UI: Home tab, only Row1 = "Auto Box Collector"
 
 ----------------------------------------------------------------------
--- 1) AA1 RUNNER (GLOBAL)
+-- 1) AA1 RUNNER (GLOBAL) — ทำงานทันทีตอนโหลดสคริปต์
 ----------------------------------------------------------------------
 do
     local Players = game:GetService("Players")
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
     local LP = Players.LocalPlayer
 
-    local SAVE = (getgenv and getgenv().UFOX_SAVE) or {
-        get = function(_, _, d) return d end,
-        set = function() end
-    }
+    local SAVE = (getgenv and getgenv().UFOX_SAVE) or { get=function(_,_,d) return d end, set=function() end }
 
-    local SYSTEM_NAME = "CollectItemsHoldBoxStack"
+    local SYSTEM_NAME = "AutoBoxCollector"
     local GAME_ID  = tonumber(game.GameId)  or 0
     local PLACE_ID = tonumber(game.PlaceId) or 0
     local BASE_SCOPE = ("AA1/%s/%d/%d"):format(SYSTEM_NAME, GAME_ID, PLACE_ID)
-
     local function K(field) return BASE_SCOPE .. "/" .. field end
 
-    -- ✅ รองรับทั้ง dot/colon (กัน SAVE ของจริงคนละทรง)
-    local function _saveGet(key, default)
-        if type(SAVE) ~= "table" then return default end
-        local fn = SAVE.get
+    -- ✅ รองรับทั้ง SAVE.get(...) และ SAVE:get(...)
+    local function SaveGet(field, default)
+        local key = K(field)
+        local fn = SAVE and SAVE.get
         if type(fn) == "function" then
-            -- ลองแบบ colon-style ก่อน: fn(self, key, default)
-            local ok1, v1 = pcall(fn, SAVE, key, default)
+            local ok1, v1 = pcall(fn, SAVE, key, default) -- colon-style
             if ok1 then return v1 end
-            -- fallback dot-style: fn(key, default)
-            local ok2, v2 = pcall(fn, key, default)
+            local ok2, v2 = pcall(fn, key, default)       -- dot-style
             if ok2 then return v2 end
-        end
-        if type(SAVE.get) == "function" then return default end
-        if type(SAVE.Get) == "function" then
-            local ok3, v3 = pcall(SAVE.Get, SAVE, key, default)
-            if ok3 then return v3 end
         end
         return default
     end
 
-    local function _saveSet(key, value)
-        if type(SAVE) ~= "table" then return end
-        local fn = SAVE.set
+    local function SaveSet(field, value)
+        local key = K(field)
+        local fn = SAVE and SAVE.set
         if type(fn) == "function" then
             local ok1 = pcall(fn, SAVE, key, value) -- colon-style
             if ok1 then return end
-            pcall(fn, key, value) -- dot-style
-            return
+            pcall(fn, key, value)                   -- dot-style
         end
-        if type(SAVE.Set) == "function" then
-            pcall(SAVE.Set, SAVE, key, value)
-        end
-    end
-
-    local function SaveGet(field, default)
-        return _saveGet(K(field), default)
-    end
-
-    local function SaveSet(field, value)
-        _saveSet(K(field), value)
     end
 
     local STATE = {
-        Enabled  = SaveGet("Enabled", false),
-        HoldSec  = SaveGet("HoldSec", 5),
-        RelaySec = SaveGet("RelaySec", 3),
+        Enabled    = SaveGet("Enabled", false),
+        HoldSec    = SaveGet("HoldSec", 5),
+        RelaySec   = SaveGet("RelaySec", 3),
+        WarmupSec  = SaveGet("WarmupSec", 3), -- ✅ รอ 3 วิ ก่อน sell ครั้งแรก
     }
 
-    -- ✅ args ตามที่นายให้มา
     local function MakeArgs()
         return {
             {
@@ -794,7 +769,7 @@ do
         }
     end
 
-    -- ✅ ยิง remote แบบ path ตรง “เหมือนโค้ดที่นายรันเอง”
+    -- ✅ ยิงแบบ path ตรง (เหมือนที่นายรันเอง)
     local function SellOnce()
         local args = MakeArgs()
         ReplicatedStorage
@@ -807,15 +782,11 @@ do
             :FireServer(unpack(args))
     end
 
-    -- Box Stack helpers
-    local function getChar()
-        return LP.Character
-    end
-
+    -- Box Stack helpers (prefix match)
+    local function getChar() return LP.Character end
     local function getHumanoid()
         local ch = getChar()
-        if not ch then return nil end
-        return ch:FindFirstChildOfClass("Humanoid")
+        return ch and ch:FindFirstChildOfClass("Humanoid") or nil
     end
 
     local function findBoxStack(container)
@@ -845,9 +816,7 @@ do
     local function equip(tool)
         local hum = getHumanoid()
         if not hum or not tool then return false end
-        return pcall(function()
-            hum:EquipTool(tool)
-        end)
+        return pcall(function() hum:EquipTool(tool) end)
     end
 
     local function ensureHoldingOnce()
@@ -875,9 +844,9 @@ do
         local myToken = loopToken
 
         task.spawn(function()
-            -- ✅ Warmup 3s ก่อนขายครั้งแรก (ระหว่างนี้คุมถือของด้วย)
+            -- ✅ Warmup ก่อน sell ครั้งแรก
             do
-                local warm = tonumber(STATE.RelaySec) or 3
+                local warm = tonumber(STATE.WarmupSec) or 3
                 if warm < 0 then warm = 0 end
                 local tEnd = os.clock() + warm
                 while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
@@ -893,8 +862,8 @@ do
                 -- 2) hold 5s
                 local hold = tonumber(STATE.HoldSec) or 5
                 if hold < 0.2 then hold = 0.2 end
-                local tHold = os.clock() + hold
-                while STATE.Enabled and loopToken == myToken and os.clock() < tHold do
+                local tHoldEnd = os.clock() + hold
+                while STATE.Enabled and loopToken == myToken and os.clock() < tHoldEnd do
                     ensureHoldingOnce()
                     task.wait(0.25)
                 end
@@ -903,8 +872,8 @@ do
                 local relay = tonumber(STATE.RelaySec) or 3
                 if relay < 0 then relay = 0 end
                 if relay > 0 then
-                    local tRelay = os.clock() + relay
-                    while STATE.Enabled and loopToken == myToken and os.clock() < tRelay do
+                    local tRelayEnd = os.clock() + relay
+                    while STATE.Enabled and loopToken == myToken and os.clock() < tRelayEnd do
                         ensureHoldingOnce()
                         task.wait(0.25)
                     end
@@ -921,7 +890,6 @@ do
         v = v and true or false
         STATE.Enabled = v
         SaveSet("Enabled", v)
-
         if v then
             task.defer(applyFromState)
         else
@@ -941,6 +909,7 @@ do
         saveSet      = SaveSet,
     }
 
+    -- ✅ Auto-run ตอนโหลด (ไม่ต้องกด Home)
     task.defer(applyFromState)
 end
 
@@ -949,7 +918,7 @@ end
 ----------------------------------------------------------------------
 registerRight("Home", function(scroll)
     local TweenService = game:GetService("TweenService")
-    local AA1 = _G.UFOX_AA1 and _G.UFOX_AA1["CollectItemsHoldBoxStack"]
+    local AA1 = _G.UFOX_AA1 and _G.UFOX_AA1["AutoBoxCollector"]
 
     local THEME = {
         GREEN = Color3.fromRGB(25,255,125),
@@ -958,29 +927,11 @@ registerRight("Home", function(scroll)
         BLACK = Color3.fromRGB(0,0,0),
     }
 
-    local function corner(ui, r)
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0, r or 12)
-        c.Parent = ui
-    end
+    local function corner(ui, r) local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,r or 12); c.Parent=ui end
+    local function stroke(ui, th, col) local s=Instance.new("UIStroke"); s.Thickness=th or 2.2; s.Color=col or THEME.GREEN; s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border; s.Parent=ui end
+    local function tween(o, p, d) TweenService:Create(o, TweenInfo.new(d or 0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), p):Play() end
 
-    local function stroke(ui, th, col)
-        local s = Instance.new("UIStroke")
-        s.Thickness = th or 2.2
-        s.Color = col or THEME.GREEN
-        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        s.Parent = ui
-    end
-
-    local function tween(o, p, d)
-        TweenService:Create(
-            o,
-            TweenInfo.new(d or 0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            p
-        ):Play()
-    end
-
-    for _, name in ipairs({"CHS_Header","CHS_Row1"}) do
+    for _, name in ipairs({"ABC_Header","ABC_Row1"}) do
         local o = scroll:FindFirstChild(name)
         if o then o:Destroy() end
     end
@@ -989,7 +940,7 @@ registerRight("Home", function(scroll)
     if not vlist then
         vlist = Instance.new("UIListLayout")
         vlist.Parent = scroll
-        vlist.Padding   = UDim.new(0, 12)
+        vlist.Padding = UDim.new(0, 12)
         vlist.SortOrder = Enum.SortOrder.LayoutOrder
     end
     scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -1002,7 +953,7 @@ registerRight("Home", function(scroll)
     end
 
     local header = Instance.new("TextLabel")
-    header.Name = "CHS_Header"
+    header.Name = "ABC_Header"
     header.Parent = scroll
     header.BackgroundTransparency = 1
     header.Size = UDim2.new(1, 0, 0, 36)
@@ -1010,7 +961,7 @@ registerRight("Home", function(scroll)
     header.TextSize = 16
     header.TextColor3 = THEME.WHITE
     header.TextXAlignment = Enum.TextXAlignment.Left
-    header.Text = "Auto Collect Boxes 📦"
+    header.Text = "Auto Box Collector 📦"
     header.LayoutOrder = base + 1
 
     local function makeRowSwitch(name, order, labelText, getState, setState)
@@ -1075,7 +1026,7 @@ registerRight("Home", function(scroll)
         return update
     end
 
-    local setVisual = makeRowSwitch("CHS_Row1", base + 2, "Auto Collect Boxes", function()
+    local setVisual = makeRowSwitch("ABC_Row1", base + 2, "Auto Box Collector", function()
         return (AA1 and AA1.getEnabled and AA1.getEnabled()) or false
     end, function(v)
         if AA1 and AA1.setEnabled then
