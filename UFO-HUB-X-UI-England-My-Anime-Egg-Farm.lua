@@ -708,8 +708,13 @@ registerRight("Home", function(scroll) end)
 registerRight("Quest", function(scroll) end)
 registerRight("Shop", function(scroll) end)
 registerRight("Settings", function(scroll) end)
---===== UFO HUB X • Home – Model A V1 + AA1 (GLOBAL RUNNER) Auto Collect Boxes (sellStack) -> Hold Box Stack 5s -> Relay 3s (Loop) =====
--- Flow loop: 1) _sellStack FireServer -> 2) Hold "Box Stack" 5s (ensure holding) -> 3) Relay 3s -> repeat
+--===== UFO HUB X • Home – Model A V1 + AA1 (GLOBAL RUNNER) Auto Collect Boxes (sellStack) -> Hold 5s -> Relay 3s (Loop) =====
+-- REQUIRED:
+-- 0) Warmup 3s BEFORE first sell
+-- 1) _sellStack:FireServer(unpack(args))
+-- 2) Hold "Box Stack" 5s (ensure holding)
+-- 3) Relay 3s (still ensure holding)
+-- 4) Repeat forever while Enabled
 -- AA1: เปิดสวิตช์ค้างไว้แล้วรัน UI หลักใหม่ = ทำงานต่อทันที (ไม่ต้องกด Home)
 
 ----------------------------------------------------------------------
@@ -746,8 +751,8 @@ do
     -- STATE
     local STATE = {
         Enabled  = SaveGet("Enabled", false),
-        HoldSec  = SaveGet("HoldSec", 5),  -- ✅ ถือของ 5 วิ
-        RelaySec = SaveGet("RelaySec", 3), -- ✅ รีเลย์ 3 วิ
+        HoldSec  = SaveGet("HoldSec", 5),  -- ถือของ 5 วิ
+        RelaySec = SaveGet("RelaySec", 3), -- รีเลย์ 3 วิ
     }
 
     -- Remote: _sellStack (ตามที่ให้มา 100%)
@@ -764,13 +769,15 @@ do
         return cachedSellRemote
     end
 
+    -- ✅ ใช้รูปแบบ args แบบที่นายให้มา
     local function MakeArgs()
-        return {
+        local args = {
             {
                 __raw = true,
                 data = {}
             }
         }
+        return args
     end
 
     local function SellOnce()
@@ -778,7 +785,7 @@ do
         GetSellRemote():FireServer(unpack(args))
     end
 
-    -- Box Stack helpers (prefix match)
+    -- Box Stack helpers (prefix match: "Box Stack" / "Box Stack [..]")
     local function getChar()
         return LP.Character
     end
@@ -847,21 +854,31 @@ do
         local myToken = loopToken
 
         task.spawn(function()
+            -- ✅ WARMUP 3s ก่อน sell ครั้งแรก
+            do
+                local warm = tonumber(STATE.RelaySec) or 3
+                if warm < 0 then warm = 0 end
+                local tWarmEnd = os.clock() + warm
+                while STATE.Enabled and loopToken == myToken and os.clock() < tWarmEnd do
+                    ensureHoldingOnce()
+                    task.wait(0.25)
+                end
+            end
+
             while STATE.Enabled and loopToken == myToken do
-                -- 1) ทำ sellStack ก่อน
+                -- 1) sellStack
                 pcall(SellOnce)
 
-                -- 2) ถือของ 5 วิ (คุมให้ยังถืออยู่)
+                -- 2) hold 5 วิ
                 local hold = tonumber(STATE.HoldSec) or 5
                 if hold < 0.2 then hold = 0.2 end
-
                 local tHoldEnd = os.clock() + hold
                 while STATE.Enabled and loopToken == myToken and os.clock() < tHoldEnd do
                     ensureHoldingOnce()
                     task.wait(0.25)
                 end
 
-                -- 3) รีเลย์ 3 วิ (ระหว่างนี้ก็ยังคุมถือไว้กันหลุด)
+                -- 3) relay 3 วิ
                 local relay = tonumber(STATE.RelaySec) or 3
                 if relay < 0 then relay = 0 end
                 if relay > 0 then
@@ -872,7 +889,7 @@ do
                     end
                 end
 
-                -- 4) วนใหม่
+                -- 4) วนต่อ
                 task.wait(0.05)
             end
             running = false
@@ -1052,7 +1069,7 @@ registerRight("Home", function(scroll)
         end
     end)
 
-    -- sync วิชวล (runner ทำงานเองอยู่แล้ว)
+    -- sync วิชวล
     task.defer(function()
         if AA1 and AA1.ensureRunner then AA1.ensureRunner() end
         if setVisual then
