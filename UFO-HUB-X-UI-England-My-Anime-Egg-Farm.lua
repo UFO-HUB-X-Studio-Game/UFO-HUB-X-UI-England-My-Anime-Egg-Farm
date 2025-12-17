@@ -4074,7 +4074,12 @@ registerRight("Quest", function(scroll)
         end
     end)
 end)
---===== UFO HUB X • Home – Model A V1 + AA1 Auto Box Seller (Sell Stack Loop + 10s Warmup) =====
+--===== UFO HUB X • Home – Model A V1 + AA1 Auto Box Seller (First Instant, Then 5s Each Loop) =====
+-- Header: "Auto Box Seller 💰📦"
+-- Row1:   "Auto Box Seller" (no emoji)
+-- Action: _sellStack:FireServer(unpack(args)) loop
+-- Rule: 1st sell = no wait, 2nd+ = wait 5 seconds every time (keeps looping)
+-- AA1: if Enabled already true, auto-run on load without opening Home
 
 registerRight("Shop", function(scroll)
     local TweenService = game:GetService("TweenService")
@@ -4213,8 +4218,8 @@ registerRight("Shop", function(scroll)
     ------------------------------------------------------------------------
     local STATE = {
         Enabled   = SaveGet("Enabled", false),
-        Interval  = SaveGet("Interval", 0.35),
-        WarmupSec = SaveGet("WarmupSec", 10), -- ✅ เหล่/หน่วงก่อนเริ่ม 10 วิ
+        Interval  = SaveGet("Interval", 0.35), -- กันสแปม/กัน error spam (ไม่เกี่ยวกับดีเลย์ 5 วิ)
+        DelaySec  = SaveGet("DelaySec", 5),    -- ✅ รอ 5 วิทุกครั้ง "ยกเว้นครั้งแรก"
     }
 
     local loopToken = 0
@@ -4230,22 +4235,27 @@ registerRight("Shop", function(scroll)
         if not STATE.Enabled then return end
 
         task.spawn(function()
-            -- ✅ หน่วงก่อนเริ่มวนลูป
-            local w = tonumber(STATE.WarmupSec) or 10
-            if w > 0 then
-                local tEnd = os.clock() + w
-                while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
-                    task.wait(0.1)
-                end
-            end
-            if not (STATE.Enabled and loopToken == myToken) then return end
+            local firstRun = true
 
             while STATE.Enabled and loopToken == myToken do
+                -- ✅ ครั้งแรกไม่ต้องรอ, ครั้งถัดไปค่อยรอ 5 วิ
+                if not firstRun then
+                    local d = tonumber(STATE.DelaySec) or 5
+                    if d > 0 then
+                        local tEnd = os.clock() + d
+                        while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
+                            task.wait(0.1)
+                        end
+                    end
+                end
+                if not (STATE.Enabled and loopToken == myToken) then return end
+
                 local ok, err = pcall(SellOnce)
                 if not ok then
                     warn("[AA1 AutoBoxSeller] FireServer failed:", err)
                     task.wait(0.6)
                 else
+                    firstRun = false
                     local dt = tonumber(STATE.Interval) or 0.35
                     if dt < 0.10 then dt = 0.10 end
                     task.wait(dt)
