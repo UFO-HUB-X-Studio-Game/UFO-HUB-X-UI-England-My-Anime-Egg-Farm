@@ -4074,182 +4074,53 @@ registerRight("Quest", function(scroll)
         end
     end)
 end)
---===== UFO HUB X • Shop – Auto Sell (Model A V1 + AA1) =====
--- Tab: Shop
--- Header: Auto Sell 💰
--- Row1: Auto Sell Ores (สวิตช์เปิด/ปิด)
--- ใช้ Remote:
---   local args = { "Sell All Ores" }
---   __remotefunction:InvokeServer(unpack(args))
--- มีระบบเซฟ AA1 + Auto-Run จาก SaveState
+--===== UFO HUB X • Home – Model A V1 + AA1 Auto Box Stack Keeper (Name Prefix Fix) =====
 
----------------------------------------------------------------------
--- 1) AA1 • ShopAutoSell (Global Auto-Run)
----------------------------------------------------------------------
-do
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
+registerRight("Shop", function(scroll)
+    local TweenService = game:GetService("TweenService")
+    local Players = game:GetService("Players")
+    local LP = Players.LocalPlayer
 
-    -----------------------------------------------------------------
-    -- SAVE (UFOX_SAVE)
-    -----------------------------------------------------------------
-    local SAVE = (getgenv and getgenv().UFOX_SAVE) or {
-        get = function(_, _, d) return d end,
-        set = function() end,
-    }
+    ------------------------------------------------------------------------
+    -- AA1 SAVE
+    ------------------------------------------------------------------------
+    local SAVE = (getgenv and getgenv().UFOX_SAVE) or { get=function(_,_,d) return d end, set=function() end }
 
+    local SYSTEM_NAME = "AutoBoxStackKeeper"
     local GAME_ID  = tonumber(game.GameId)  or 0
     local PLACE_ID = tonumber(game.PlaceId) or 0
-
-    -- AA1/ShopAutoSell/<GAME>/<PLACE>/Enabled
-    local SYSTEM_NAME = "ShopAutoSell"
-    local BASE_SCOPE  = ("AA1/%s/%d/%d"):format(SYSTEM_NAME, GAME_ID, PLACE_ID)
-
-    local function K(field)
-        return BASE_SCOPE .. "/" .. field
-    end
-
+    local BASE_SCOPE = ("AA1/%s/%d/%d"):format(SYSTEM_NAME, GAME_ID, PLACE_ID)
+    local function K(field) return BASE_SCOPE .. "/" .. field end
     local function SaveGet(field, default)
-        local ok, v = pcall(function()
-            return SAVE.get(K(field), default)
-        end)
+        local ok, v = pcall(function() return SAVE.get(K(field), default) end)
         return ok and v or default
     end
+    local function SaveSet(field, value) pcall(function() SAVE.set(K(field), value) end) end
 
-    local function SaveSet(field, value)
-        pcall(function()
-            SAVE.set(K(field), value)
-        end)
-    end
-
-    -----------------------------------------------------------------
-    -- STATE + CONFIG
-    -----------------------------------------------------------------
-    local STATE = {
-        Enabled = SaveGet("Enabled", false),
-    }
-
-    -- ระยะเวลาขายออโต้ (วินาทีต่อครั้ง)
-    local SELL_INTERVAL = 5
-
-    -----------------------------------------------------------------
-    -- ฟังก์ชันขาย 1 ครั้ง
-    -----------------------------------------------------------------
-    local function sellOnce()
-        local ok, err = pcall(function()
-            local paper   = ReplicatedStorage:WaitForChild("Paper")
-            local remotes = paper:WaitForChild("Remotes")
-            local rf      = remotes:WaitForChild("__remotefunction")
-
-            local args = { "Sell All Ores" }
-            rf:InvokeServer(unpack(args))
-        end)
-
-        if not ok then
-            warn("[UFO HUB X • ShopAutoSell] sellOnce error:", err)
-        end
-    end
-
-    -----------------------------------------------------------------
-    -- applyFromState + loop
-    -----------------------------------------------------------------
-    local running = false
-
-    local function applyFromState()
-        if not STATE.Enabled then
-            -- ปิดระบบ → ปล่อยให้ loop จบเอง
-            return
-        end
-
-        -- ถ้ามี loop อยู่แล้ว ไม่ต้องสร้างซ้ำ
-        if running then return end
-        running = true
-
-        task.spawn(function()
-            while STATE.Enabled do
-                sellOnce()
-                task.wait(SELL_INTERVAL)
-            end
-            running = false
-        end)
-    end
-
-    local function SetEnabled(v)
-        STATE.Enabled = v and true or false
-        SaveSet("Enabled", STATE.Enabled)
-        task.defer(applyFromState)
-    end
-
-    -----------------------------------------------------------------
-    -- AA1 Auto-Run ตอนโหลดสคริปต์
-    -----------------------------------------------------------------
-    task.defer(function()
-        applyFromState()
-    end)
-
-    -----------------------------------------------------------------
-    -- export ให้ UI เรียกใช้
-    -----------------------------------------------------------------
-    _G.UFOX_AA1 = _G.UFOX_AA1 or {}
-    _G.UFOX_AA1[SYSTEM_NAME] = {
-        state      = STATE,
-        apply      = applyFromState,
-        setEnabled = SetEnabled,
-        saveGet    = SaveGet,
-        saveSet    = SaveSet,
-    }
-end
-
----------------------------------------------------------------------
--- 2) UI ฝั่งขวา • Shop (Model A V1)
----------------------------------------------------------------------
-registerRight("Shop", function(scroll)
-    local TweenService      = game:GetService("TweenService")
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-
-    -----------------------------------------------------------------
+    ------------------------------------------------------------------------
     -- THEME + HELPERS (Model A V1)
-    -----------------------------------------------------------------
+    ------------------------------------------------------------------------
     local THEME = {
         GREEN = Color3.fromRGB(25,255,125),
         RED   = Color3.fromRGB(255,40,40),
         WHITE = Color3.fromRGB(255,255,255),
         BLACK = Color3.fromRGB(0,0,0),
     }
+    local function corner(ui, r) local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,r or 12); c.Parent=ui end
+    local function stroke(ui, th, col) local s=Instance.new("UIStroke"); s.Thickness=th or 2.2; s.Color=col or THEME.GREEN; s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border; s.Parent=ui end
+    local function tween(o, p, d) TweenService:Create(o, TweenInfo.new(d or 0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), p):Play() end
 
-    local function corner(ui, r)
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0, r or 12)
-        c.Parent = ui
+    ------------------------------------------------------------------------
+    -- CLEANUP
+    ------------------------------------------------------------------------
+    for _, name in ipairs({"BS_Header","BS_Row1"}) do
+        local o = scroll:FindFirstChild(name)
+        if o then o:Destroy() end
     end
 
-    local function stroke(ui, th, col)
-        local s = Instance.new("UIStroke")
-        s.Thickness = th or 2.2
-        s.Color = col or THEME.GREEN
-        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        s.Parent = ui
-    end
-
-    local function tween(o, p, d)
-        TweenService:Create(
-            o,
-            TweenInfo.new(d or 0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            p
-        ):Play()
-    end
-
-    -----------------------------------------------------------------
-    -- ดึง AA1 ของ ShopAutoSell (ถ้ามี)
-    -----------------------------------------------------------------
-    local AA1 = _G.UFOX_AA1 and _G.UFOX_AA1["ShopAutoSell"]
-    local savedOn = false
-    if AA1 and AA1.state then
-        savedOn = AA1.state.Enabled and true or false
-    end
-
-    -----------------------------------------------------------------
-    -- UIListLayout (Model A V1 rule)
-    -----------------------------------------------------------------
+    ------------------------------------------------------------------------
+    -- UIListLayout (A V1)
+    ------------------------------------------------------------------------
     local vlist = scroll:FindFirstChildOfClass("UIListLayout")
     if not vlist then
         vlist = Instance.new("UIListLayout")
@@ -4266,11 +4137,11 @@ registerRight("Shop", function(scroll)
         end
     end
 
-    -----------------------------------------------------------------
-    -- HEADER: Auto Sell 💰
-    -----------------------------------------------------------------
+    ------------------------------------------------------------------------
+    -- HEADER (English + emoji)
+    ------------------------------------------------------------------------
     local header = Instance.new("TextLabel")
-    header.Name = "A1_Shop_AutoSell_Header"
+    header.Name = "BS_Header"
     header.Parent = scroll
     header.BackgroundTransparency = 1
     header.Size = UDim2.new(1, 0, 0, 36)
@@ -4278,13 +4149,111 @@ registerRight("Shop", function(scroll)
     header.TextSize = 16
     header.TextColor3 = THEME.WHITE
     header.TextXAlignment = Enum.TextXAlignment.Left
-    header.Text = "》》》Auto Sell 💰《《《"
+    header.Text = "Auto Box Stack Keeper 📦🧠"
     header.LayoutOrder = base + 1
 
-    -----------------------------------------------------------------
-    -- แถวสวิตช์ Model A V1
-    -----------------------------------------------------------------
-    local function makeRowSwitch(name, order, labelText, onToggle)
+    ------------------------------------------------------------------------
+    -- STATE + LOOP
+    ------------------------------------------------------------------------
+    local STATE = {
+        Enabled = SaveGet("Enabled", false),
+        HoldSec = SaveGet("HoldSec", 300), -- 5 minutes
+    }
+
+    local loopToken = 0
+
+    local function getChar()
+        return LP.Character
+    end
+
+    local function getHumanoid()
+        local ch = getChar()
+        if not ch then return nil end
+        return ch:FindFirstChildOfClass("Humanoid")
+    end
+
+    -- ✅ FIX: หา "Box Stack" แบบ prefix (รองรับ "Box Stack [66m]")
+    local function findBoxStack(container)
+        if not container then return nil end
+        for _, obj in ipairs(container:GetChildren()) do
+            if obj:IsA("Tool") and typeof(obj.Name) == "string" and obj.Name:sub(1, 9) == "Box Stack" then
+                return obj
+            end
+        end
+        return nil
+    end
+
+    local function getBoxStackAnywhere()
+        local bp = LP:FindFirstChild("Backpack")
+        local ch = getChar()
+        return findBoxStack(bp) or findBoxStack(ch)
+    end
+
+    -- ✅ ถืออยู่ = Parent เป็น Character (หรือชื่อ Player)
+    local function isHolding(tool)
+        if not tool or not tool.Parent then return false end
+        local ch = getChar()
+        if ch and tool.Parent == ch then return true end
+        if tool.Parent.Name == LP.Name then return true end
+        return false
+    end
+
+    local function equip(tool)
+        local hum = getHumanoid()
+        if not hum or not tool then return false end
+        return pcall(function() hum:EquipTool(tool) end)
+    end
+
+    local function ensureHolding()
+        local tool = getBoxStackAnywhere()
+        if not tool then return false end
+        if isHolding(tool) then return true end
+        equip(tool)
+        task.wait(0.1)
+        tool = getBoxStackAnywhere()
+        return tool and isHolding(tool) or false
+    end
+
+    local function runHold(myToken)
+        local hold = tonumber(STATE.HoldSec) or 300
+        if hold < 5 then hold = 5 end
+
+        local t0 = os.clock()
+        while STATE.Enabled and loopToken == myToken and (os.clock() - t0) < hold do
+            ensureHolding()
+            task.wait(0.25)
+        end
+    end
+
+    local function applyFromState()
+        loopToken += 1
+        local myToken = loopToken
+        if not STATE.Enabled then return end
+
+        task.spawn(function()
+            while STATE.Enabled and loopToken == myToken do
+                pcall(runHold, myToken)
+                task.wait(0.5)
+            end
+        end)
+    end
+
+    local function SetEnabled(v)
+        STATE.Enabled = v and true or false
+        SaveSet("Enabled", STATE.Enabled)
+        task.defer(applyFromState)
+        if not STATE.Enabled then
+            loopToken += 1
+        end
+    end
+
+    -- AA1 auto-run
+    task.defer(applyFromState)
+
+    ------------------------------------------------------------------------
+    -- Row Switch (A V1)
+    ------------------------------------------------------------------------
+    local function makeRowSwitch(name, order, labelText, getState, setState)
         local row = Instance.new("Frame")
         row.Name = name
         row.Parent = scroll
@@ -4324,23 +4293,9 @@ registerRight("Shop", function(scroll)
         knob.Position = UDim2.new(0,2,0.5,-11)
         corner(knob,11)
 
-        local currentOn = false
-
-        local function updateVisual(on)
-            currentOn = on
+        local function update(on)
             swStroke.Color = on and THEME.GREEN or THEME.RED
-            tween(knob, {
-                Position = UDim2.new(on and 1 or 0, on and -24 or 2, 0.5, -11)
-            }, 0.08)
-        end
-
-        local function setState(on, fireCallback)
-            fireCallback = (fireCallback ~= false)
-            if currentOn == on then return end
-            updateVisual(on)
-            if fireCallback and onToggle then
-                onToggle(on)
-            end
+            tween(knob, { Position = UDim2.new(on and 1 or 0, on and -24 or 2, 0.5, -11) }, 0.08)
         end
 
         local btn = Instance.new("TextButton")
@@ -4349,50 +4304,21 @@ registerRight("Shop", function(scroll)
         btn.Size = UDim2.fromScale(1,1)
         btn.Text = ""
         btn.AutoButtonColor = false
+
         btn.MouseButton1Click:Connect(function()
-            setState(not currentOn, true)
+            local new = not getState()
+            setState(new)
+            update(new)
         end)
 
-        updateVisual(false)
-
-        return {
-            row      = row,
-            setState = setState,
-            getState = function() return currentOn end,
-        }
+        update(getState())
+        return row
     end
 
-    -----------------------------------------------------------------
-    -- Row1: Auto Sell Ores (เชื่อมกับ AA1 ShopAutoSell)
-    -----------------------------------------------------------------
-    local autoSellRow
-
-    autoSellRow = makeRowSwitch("A1_Shop_AutoSell", base + 2, "Auto Sell Ores", function(state)
-        if AA1 and AA1.setEnabled then
-            AA1.setEnabled(state)
-        else
-            -- fallback แบบตรง ๆ (เผื่อ AA1 ไม่มี)
-            local SAVE = (getgenv and getgenv().UFOX_SAVE) or {
-                get = function(_, _, d) return d end,
-                set = function() end,
-            }
-            local GAME_ID  = tonumber(game.GameId)  or 0
-            local PLACE_ID = tonumber(game.PlaceId) or 0
-            local BASE_SCOPE  = ("AA1/%s/%d/%d"):format("ShopAutoSell", GAME_ID, PLACE_ID)
-            local function K(field) return BASE_SCOPE .. "/" .. field end
-            pcall(function()
-                SAVE.set(K("Enabled"), state and true or false)
-            end)
-        end
-    end)
-
-    -----------------------------------------------------------------
-    -- Sync UI จาก STATE เซฟ (เปิดแท็บ Shop ครั้งแรก)
-    -----------------------------------------------------------------
-    task.defer(function()
-        if savedOn and autoSellRow then
-            autoSellRow.setState(true, false) -- อัปเดต UI เฉย ๆ ไม่ยิง onToggle ซ้ำ
-        end
+    makeRowSwitch("BS_Row1", base + 2, "Auto Box Stack Keeper", function()
+        return STATE.Enabled
+    end, function(v)
+        SetEnabled(v)
     end)
 end)
 --===== UFO HUB X • Shop – Auto Buy Pickaxe & Miners + Auto Buy Auras + Auto Buy Map (Model A V1 + AA1) =====
