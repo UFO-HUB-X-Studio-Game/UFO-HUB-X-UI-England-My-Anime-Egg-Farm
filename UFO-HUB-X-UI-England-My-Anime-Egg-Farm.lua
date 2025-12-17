@@ -1016,381 +1016,333 @@ registerRight("Home", function(scroll)
         end
     end)
 end)
---===== UFO HUB X • Home – Model A V1 + AA1 (GLOBAL RUNNER) Auto Egg Placement (_placeItem) =====
--- Flow:
---  1) Find Plot -> Platforms
---  2) For each platform: if has Base.PlacementPrompt (enabled) then FireServer _placeItem with platform = platformName
---  3) Step delay between platforms + Relay delay per round
--- AA1: เปิดสวิตช์ค้างไว้ แล้วรัน UI หลักใหม่ = ทำงานต่อทันที (ไม่ต้องกดเข้า Home)
+-- UFOX_AutoEggPlacement_AllInOne.server.lua
+-- Put this Script in ServerScriptService
+
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Workspace = game:GetService("Workspace")
+local DataStoreService = game:GetService("DataStoreService")
 
 ----------------------------------------------------------------------
--- 1) AA1 RUNNER (GLOBAL)
+-- 0) CONFIG
 ----------------------------------------------------------------------
-do
-    local Players = game:GetService("Players")
-    local ReplicatedStorage = game:GetService("ReplicatedStorage")
-    local Workspace = game:GetService("Workspace")
-    local LP = Players.LocalPlayer
+local REMOTE_NAME = "UFOX_RequestAutoEggPlace"
+local SAVE_DS_NAME = "UFOX_AA1_Save_V1"
+local SYSTEM_NAME = "AutoEggPlacement" -- AA1 key name
+local DEFAULT_RELAY_SEC = 1.5
 
-    local SAVE = (getgenv and getgenv().UFOX_SAVE) or { get=function(_,_,d) return d end, set=function() end }
+local SaveDS = DataStoreService:GetDataStore(SAVE_DS_NAME)
 
-    local SYSTEM_NAME = "AutoEggPlacement_PlaceItem"
-    local GAME_ID  = tonumber(game.GameId)  or 0
-    local PLACE_ID = tonumber(game.PlaceId) or 0
-    local BASE_SCOPE = ("AA1/%s/%d/%d"):format(SYSTEM_NAME, GAME_ID, PLACE_ID)
-    local function K(field) return BASE_SCOPE .. "/" .. field end
-
-    local function SaveGet(field, default)
-        local ok, v = pcall(function() return SAVE.get(K(field), default) end)
-        return ok and v or default
-    end
-    local function SaveSet(field, value)
-        pcall(function() SAVE.set(K(field), value) end)
-    end
-
-    -- ✅ ตั้งค่าหลัก (แก้ได้ตรงนี้)
-    local STATE = {
-        Enabled  = SaveGet("Enabled", false),
-
-        -- หน่วงระหว่างยิงแต่ละ Platform
-        StepSec  = SaveGet("StepSec", 0.15),
-
-        -- หน่วงต่อ “รอบ” (หลังยิงครบทุก platform แล้วค่อยวนใหม่)
-        RelaySec = SaveGet("RelaySec", 1.5),
-
-        -- ถ้าจะบังคับ PlotId เอง (เช่น "1") ใส่ได้ ไม่ใส่ = หาอัตโนมัติ
-        PlotId   = SaveGet("PlotId", ""),
-
-        -- ✅ ข้อมูลไข่ (ใช้ตามโค้ดที่ 1 ของนาย)
-        uuid     = SaveGet("uuid", "94f3b3a8-f0eb-4353-b703-c43fc33036ea"),
-        rarity   = SaveGet("rarity", "Epic"),
-        amount   = SaveGet("amount", 1),
-        tool_id  = SaveGet("tool_id", "entity_YuriZahard_egg"),
-        tool_type= SaveGet("tool_type", "egg"),
-        variety  = SaveGet("variety", "Normal"),
-    }
-
-    local function GetPlaceRemote()
-        return ReplicatedStorage
-            :WaitForChild("Modules")
-            :WaitForChild("Internals")
-            :WaitForChild("Skeleton")
-            :WaitForChild("Conduit")
-            :WaitForChild("Instances")
-            :WaitForChild("_placeItem")
-    end
-
-    -- หา Plot ของผู้เล่นแบบ robust (ถ้าหาไม่เจอ fallback เป็น "1")
-    local function FindMyPlot()
-        local plots = Workspace:FindFirstChild("Plots")
-        if not plots then return nil end
-
-        -- 1) ถ้ามี PlotId ถูกบันทึกไว้
-        if typeof(STATE.PlotId) == "string" and STATE.PlotId ~= "" then
-            local p = plots:FindFirstChild(STATE.PlotId)
-            if p then return p end
-        end
-
-        -- 2) เดาโดย Attribute/Value ที่นิยมใช้
-        for _, p in ipairs(plots:GetChildren()) do
-            -- OwnerUserId / OwnerId / UserId
-            local a1 = p:GetAttribute("OwnerUserId") or p:GetAttribute("OwnerId") or p:GetAttribute("UserId")
-            if tonumber(a1) == tonumber(LP.UserId) then
-                return p
-            end
-
-            -- OwnerName
-            local a2 = p:GetAttribute("OwnerName")
-            if typeof(a2) == "string" and a2 == LP.Name then
-                return p
-            end
-
-            -- StringValue/IntValue Owner
-            local ov = p:FindFirstChild("Owner") or p:FindFirstChild("OwnerId") or p:FindFirstChild("OwnerUserId")
-            if ov and ov.Value ~= nil then
-                if tostring(ov.Value) == tostring(LP.UserId) or tostring(ov.Value) == LP.Name then
-                    return p
-                end
-            end
-        end
-
-        -- 3) fallback
-        return plots:FindFirstChild("1") or plots:GetChildren()[1]
-    end
-
-    local function GetPlatforms()
-        local plot = FindMyPlot()
-        if not plot then return nil end
-        return plot:FindFirstChild("Platforms")
-    end
-
-    local function IsPlatformPlaceable(platformFolder)
-        -- ขอให้ตรงตามที่นายดูใน Explorer: Platforms[x].Base.PlacementPrompt
-        local base = platformFolder:FindFirstChild("Base")
-        if not base then return false end
-        local prompt = base:FindFirstChild("PlacementPrompt")
-        if prompt and prompt:IsA("ProximityPrompt") then
-            if prompt.Enabled == false then return false end
-            return true
-        end
-        -- บางแมพอาจไม่มี prompt แต่ place remote ได้อยู่
-        return true
-    end
-
-    local function PlaceAtPlatform(platformName)
-        local args = {
-            {
-                __raw = true,
-                data = {
-                    uuid = STATE.uuid,
-                    rarity = STATE.rarity,
-                    amount = tonumber(STATE.amount) or 1,
-                    platform = tostring(platformName),
-                    tool_id = STATE.tool_id,
-                    tool_type = STATE.tool_type,
-                    variety = STATE.variety,
-                }
-            }
-        }
-        GetPlaceRemote():FireServer(unpack(args))
-    end
-
-    local loopToken = 0
-    local running = false
-
-    local function applyFromState()
-        if not STATE.Enabled then
-            running = false
-            return
-        end
-        if running then return end
-        running = true
-
-        loopToken += 1
-        local myToken = loopToken
-
-        task.spawn(function()
-            while STATE.Enabled and loopToken == myToken do
-                local platforms = GetPlatforms()
-
-                if platforms then
-                    local children = platforms:GetChildren()
-                    table.sort(children, function(a,b)
-                        return tostring(a.Name) < tostring(b.Name)
-                    end)
-
-                    local step = tonumber(STATE.StepSec) or 0.15
-                    if step < 0 then step = 0 end
-
-                    for _, pf in ipairs(children) do
-                        if not (STATE.Enabled and loopToken == myToken) then break end
-
-                        if pf and pf.Parent and IsPlatformPlaceable(pf) then
-                            local ok, err = pcall(function()
-                                PlaceAtPlatform(pf.Name)
-                            end)
-                            if not ok then
-                                warn("[AutoEggPlacement] _placeItem failed:", err)
-                            end
-                            if step > 0 then task.wait(step) end
-                        end
-                    end
-                end
-
-                local relay = tonumber(STATE.RelaySec) or 1.5
-                if relay < 0.05 then relay = 0.05 end
-                local tEnd = os.clock() + relay
-                while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
-                    task.wait(0.1)
-                end
-            end
-
-            running = false
-        end)
-    end
-
-    local function SetEnabled(v)
-        v = v and true or false
-        STATE.Enabled = v
-        SaveSet("Enabled", v)
-        if v then
-            task.defer(applyFromState)
-        else
-            loopToken += 1
-            running = false
-        end
-    end
-
-    _G.UFOX_AA1 = _G.UFOX_AA1 or {}
-    _G.UFOX_AA1[SYSTEM_NAME] = {
-        state        = STATE,
-        apply        = applyFromState,
-        setEnabled   = SetEnabled,
-        getEnabled   = function() return STATE.Enabled == true end,
-        ensureRunner = function() task.defer(applyFromState) end,
-        saveGet      = SaveGet,
-        saveSet      = SaveSet,
-    }
-
-    -- ✅ Auto-run ตอนโหลด
-    task.defer(applyFromState)
+local function saveKey(userId)
+	return ("AA1/%s/%d/%d"):format(SYSTEM_NAME, tonumber(game.GameId) or 0, tonumber(game.PlaceId) or 0) .. "/" .. tostring(userId)
 end
 
 ----------------------------------------------------------------------
--- 2) UI PART: Model A V1 ใน Tab Home (มีแค่รายการที่ 1) + sync
+-- 1) RemoteEvent (server-owned)
 ----------------------------------------------------------------------
-registerRight("Home", function(scroll)
-    local TweenService = game:GetService("TweenService")
-    local AA1 = _G.UFOX_AA1 and _G.UFOX_AA1["AutoEggPlacement_PlaceItem"]
+local re = ReplicatedStorage:FindFirstChild(REMOTE_NAME) or Instance.new("RemoteEvent")
+re.Name = REMOTE_NAME
+re.Parent = ReplicatedStorage
 
-    local THEME = {
-        GREEN = Color3.fromRGB(25,255,125),
-        RED   = Color3.fromRGB(255,40,40),
-        WHITE = Color3.fromRGB(255,255,255),
-        BLACK = Color3.fromRGB(0,0,0),
-    }
+----------------------------------------------------------------------
+-- 2) Your core egg placement function (SERVER)
+--    ✅ Replace the content inside PlaceEggForPlayerAtPlatform with your real placement logic
+----------------------------------------------------------------------
+local function PlaceEggForPlayerAtPlatform(player, platformFolder)
+	-- IMPORTANT: Put your real placement logic here.
+	-- For now, demo print:
+	print("[EggAuto] PlaceEgg:", player.Name, "platform:", platformFolder and platformFolder.Name)
 
-    local function corner(ui, r)
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0, r or 12)
-        c.Parent = ui
-    end
+	-- Return true when placed success
+	return true
+end
 
-    local function stroke(ui, th, col)
-        local s = Instance.new("UIStroke")
-        s.Thickness = th or 2.2
-        s.Color = col or THEME.GREEN
-        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        s.Parent = ui
-    end
+----------------------------------------------------------------------
+-- 3) Find player's plot + collect prompts
+----------------------------------------------------------------------
+local function getPlayerPlot(player)
+	local plots = Workspace:FindFirstChild("Plots")
+	if not plots then return nil end
 
-    local function tween(o, p, d)
-        TweenService:Create(o, TweenInfo.new(d or 0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), p):Play()
-    end
+	for _, plot in ipairs(plots:GetChildren()) do
+		local uid = plot:GetAttribute("OwnerUserId") or plot:GetAttribute("OwnerId") or plot:GetAttribute("UserId")
+		if tonumber(uid) == tonumber(player.UserId) then return plot end
 
-    -- CLEANUP เฉพาะระบบนี้
-    for _, name in ipairs({"AEP_Header","AEP_Row1"}) do
-        local o = scroll:FindFirstChild(name)
-        if o then o:Destroy() end
-    end
+		local on = plot:GetAttribute("OwnerName")
+		if typeof(on) == "string" and on == player.Name then return plot end
 
-    -- UIListLayout (A V1) — ต้องมีอันเดียว
-    local vlist = scroll:FindFirstChildOfClass("UIListLayout")
-    if not vlist then
-        vlist = Instance.new("UIListLayout")
-        vlist.Parent = scroll
-        vlist.Padding   = UDim.new(0, 12)
-        vlist.SortOrder = Enum.SortOrder.LayoutOrder
-    end
-    scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+		local ov = plot:FindFirstChild("Owner") or plot:FindFirstChild("OwnerId") or plot:FindFirstChild("OwnerUserId")
+		if ov and ov.Value ~= nil then
+			if tostring(ov.Value) == tostring(player.UserId) or tostring(ov.Value) == player.Name then
+				return plot
+			end
+		end
+	end
 
-    -- base LayoutOrder dynamic (max+1)
-    local base = 0
-    for _, ch in ipairs(scroll:GetChildren()) do
-        if ch:IsA("GuiObject") and ch ~= vlist then
-            base = math.max(base, ch.LayoutOrder or 0)
-        end
-    end
-    base = base + 1
+	-- fallback for dev/testing
+	return plots:FindFirstChild("1") or plots:GetChildren()[1]
+end
 
-    -- HEADER (English + emoji)
-    local header = Instance.new("TextLabel")
-    header.Name = "AEP_Header"
-    header.Parent = scroll
-    header.BackgroundTransparency = 1
-    header.Size = UDim2.new(1, 0, 0, 36)
-    header.Font = Enum.Font.GothamBold
-    header.TextSize = 16
-    header.TextColor3 = THEME.WHITE
-    header.TextXAlignment = Enum.TextXAlignment.Left
-    header.Text = "Auto Egg Placement 🥚"
-    header.LayoutOrder = base
+local function iterPlacementPrompts(plot)
+	local platforms = plot and plot:FindFirstChild("Platforms")
+	if not platforms then return {} end
 
-    local function makeRowSwitch(name, order, labelText, getState, setState)
-        local row = Instance.new("Frame")
-        row.Name = name
-        row.Parent = scroll
-        row.Size = UDim2.new(1, -6, 0, 46)
-        row.BackgroundColor3 = THEME.BLACK
-        corner(row, 12)
-        stroke(row, 2.2, THEME.GREEN)
-        row.LayoutOrder = order
+	local out = {}
+	for _, pf in ipairs(platforms:GetChildren()) do
+		local base = pf:FindFirstChild("Base")
+		local prompt = base and base:FindFirstChild("PlacementPrompt")
+		if prompt and prompt:IsA("ProximityPrompt") then
+			table.insert(out, { platform = pf, prompt = prompt })
+		end
+	end
+	return out
+end
 
-        local lab = Instance.new("TextLabel")
-        lab.Parent = row
-        lab.BackgroundTransparency = 1
-        lab.Size = UDim2.new(1, -160, 1, 0)
-        lab.Position = UDim2.new(0, 16, 0, 0)
-        lab.Font = Enum.Font.GothamBold
-        lab.TextSize = 13
-        lab.TextColor3 = THEME.WHITE
-        lab.TextXAlignment = Enum.TextXAlignment.Left
-        lab.Text = labelText
+local function bindPrompts(plot)
+	for _, item in ipairs(iterPlacementPrompts(plot)) do
+		local prompt = item.prompt
+		if not prompt:GetAttribute("UFOX_Bound") then
+			prompt:SetAttribute("UFOX_Bound", true)
+			prompt.Triggered:Connect(function(player)
+				PlaceEggForPlayerAtPlatform(player, item.platform)
+			end)
+		end
+	end
+end
 
-        local sw = Instance.new("Frame")
-        sw.Parent = row
-        sw.AnchorPoint = Vector2.new(1,0.5)
-        sw.Position = UDim2.new(1, -12, 0.5, 0)
-        sw.Size = UDim2.fromOffset(52,26)
-        sw.BackgroundColor3 = THEME.BLACK
-        corner(sw, 13)
+----------------------------------------------------------------------
+-- 4) Save/load AA1 state (server side)
+----------------------------------------------------------------------
+local function loadState(player)
+	local key = saveKey(player.UserId)
+	local ok, data = pcall(function()
+		return SaveDS:GetAsync(key)
+	end)
 
-        local swStroke = Instance.new("UIStroke")
-        swStroke.Parent = sw
-        swStroke.Thickness = 1.8
+	data = (ok and type(data) == "table" and data) or {}
+	if type(data.Enabled) ~= "boolean" then data.Enabled = false end
+	if type(data.RelaySec) ~= "number" then data.RelaySec = DEFAULT_RELAY_SEC end
 
-        local knob = Instance.new("Frame")
-        knob.Parent = sw
-        knob.Size = UDim2.fromOffset(22,22)
-        knob.BackgroundColor3 = THEME.WHITE
-        knob.Position = UDim2.new(0,2,0.5,-11)
-        corner(knob,11)
+	return data
+end
 
-        local function update(on)
-            swStroke.Color = on and THEME.GREEN or THEME.RED
-            tween(knob, { Position = UDim2.new(on and 1 or 0, on and -24 or 2, 0.5, -11) }, 0.08)
-        end
+local function saveState(player, state)
+	local key = saveKey(player.UserId)
+	pcall(function()
+		SaveDS:SetAsync(key, state)
+	end)
+end
 
-        local btn = Instance.new("TextButton")
-        btn.Parent = sw
-        btn.BackgroundTransparency = 1
-        btn.Size = UDim2.fromScale(1,1)
-        btn.Text = ""
-        btn.AutoButtonColor = false
+----------------------------------------------------------------------
+-- 5) Auto runner per player (server loop)
+----------------------------------------------------------------------
+local runners = {} -- [userId] = {token=int, enabled=bool, relay=number}
 
-        btn.MouseButton1Click:Connect(function()
-            local new = not getState()
-            setState(new)
-            update(new)
-        end)
+local function stopRunner(player)
+	local r = runners[player.UserId]
+	if not r then return end
+	r.token += 1
+	r.enabled = false
+end
 
-        update(getState())
-        return update
-    end
+local function startRunner(player, relaySec)
+	local r = runners[player.UserId]
+	if not r then
+		r = { token = 0, enabled = false, relay = DEFAULT_RELAY_SEC }
+		runners[player.UserId] = r
+	end
 
-    -- Row1 (ไม่มี emoji ตามที่ขอ)
-    local setVisual = makeRowSwitch(
-        "AEP_Row1",
-        base + 1,
-        "วางไข่ออโต้",
-        function()
-            return (AA1 and AA1.getEnabled and AA1.getEnabled()) or false
-        end,
-        function(v)
-            if AA1 and AA1.setEnabled then
-                AA1.setEnabled(v)
-                if v and AA1.ensureRunner then AA1.ensureRunner() end
-            end
-        end
-    )
+	r.token += 1
+	local myToken = r.token
+	r.enabled = true
+	r.relay = tonumber(relaySec) or r.relay or DEFAULT_RELAY_SEC
 
-    -- sync วิชวล + ensure runner
-    task.defer(function()
-        if AA1 and AA1.ensureRunner then AA1.ensureRunner() end
-        if setVisual then
-            setVisual((AA1 and AA1.getEnabled and AA1.getEnabled()) or false)
-        end
-    end)
+	task.spawn(function()
+		while r.enabled and runners[player.UserId] == r and r.token == myToken do
+			local plot = getPlayerPlot(player)
+			if plot then
+				bindPrompts(plot)
+				for _, item in ipairs(iterPlacementPrompts(plot)) do
+					if not (r.enabled and r.token == myToken) then break end
+					if item.prompt.Enabled ~= false then
+						PlaceEggForPlayerAtPlatform(player, item.platform)
+					end
+				end
+			end
+
+			local relay = tonumber(r.relay) or DEFAULT_RELAY_SEC
+			if relay < 0.1 then relay = 0.1 end
+			task.wait(relay)
+		end
+	end)
+end
+
+----------------------------------------------------------------------
+-- 6) Remote API from UI (client -> server)
+----------------------------------------------------------------------
+-- payload = { Enabled = boolean, RelaySec = number? }
+re.OnServerEvent:Connect(function(player, payload)
+	if typeof(payload) ~= "table" then payload = {} end
+	local enabled = payload.Enabled == true
+	local relay = tonumber(payload.RelaySec)
+
+	local state = loadState(player)
+	state.Enabled = enabled
+	if relay then state.RelaySec = relay end
+	saveState(player, state)
+
+	if enabled then
+		startRunner(player, state.RelaySec)
+	else
+		stopRunner(player)
+	end
+end)
+
+----------------------------------------------------------------------
+-- 7) Build UI in PlayerGui (Model A V1-ish) + sync with saved state
+----------------------------------------------------------------------
+local function buildClientUI(player, initState)
+	-- We will create a small ScreenGui with Home panel only (your Model A V1 look)
+	local gui = Instance.new("ScreenGui")
+	gui.Name = "UFOX_Home_AutoEggPlacement"
+	gui.ResetOnSpawn = false
+
+	local main = Instance.new("Frame")
+	main.Name = "HomePanel"
+	main.Parent = gui
+	main.Size = UDim2.new(0, 360, 0, 140)
+	main.Position = UDim2.new(0, 24, 0.5, -70)
+	main.BackgroundColor3 = Color3.fromRGB(0,0,0)
+
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0, 12)
+	corner.Parent = main
+
+	local stroke = Instance.new("UIStroke")
+	stroke.Thickness = 2.2
+	stroke.Color = Color3.fromRGB(25,255,125)
+	stroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	stroke.Parent = main
+
+	local header = Instance.new("TextLabel")
+	header.Parent = main
+	header.BackgroundTransparency = 1
+	header.Size = UDim2.new(1, -20, 0, 36)
+	header.Position = UDim2.new(0, 10, 0, 8)
+	header.Font = Enum.Font.GothamBold
+	header.TextSize = 16
+	header.TextColor3 = Color3.fromRGB(255,255,255)
+	header.TextXAlignment = Enum.TextXAlignment.Left
+	header.Text = "Auto Egg Placement 🥚"
+
+	local row = Instance.new("Frame")
+	row.Parent = main
+	row.Size = UDim2.new(1, -20, 0, 46)
+	row.Position = UDim2.new(0, 10, 0, 54)
+	row.BackgroundColor3 = Color3.fromRGB(0,0,0)
+
+	local rowCorner = Instance.new("UICorner")
+	rowCorner.CornerRadius = UDim.new(0, 12)
+	rowCorner.Parent = row
+
+	local rowStroke = Instance.new("UIStroke")
+	rowStroke.Thickness = 2.2
+	rowStroke.Color = Color3.fromRGB(25,255,125)
+	rowStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	rowStroke.Parent = row
+
+	local label = Instance.new("TextLabel")
+	label.Parent = row
+	label.BackgroundTransparency = 1
+	label.Size = UDim2.new(1, -160, 1, 0)
+	label.Position = UDim2.new(0, 16, 0, 0)
+	label.Font = Enum.Font.GothamBold
+	label.TextSize = 13
+	label.TextColor3 = Color3.fromRGB(255,255,255)
+	label.TextXAlignment = Enum.TextXAlignment.Left
+	label.Text = "วางไข่ออโต้" -- row1 no emoji
+
+	-- switch
+	local sw = Instance.new("Frame")
+	sw.Parent = row
+	sw.AnchorPoint = Vector2.new(1, 0.5)
+	sw.Position = UDim2.new(1, -12, 0.5, 0)
+	sw.Size = UDim2.fromOffset(52, 26)
+	sw.BackgroundColor3 = Color3.fromRGB(0,0,0)
+
+	local swCorner = Instance.new("UICorner")
+	swCorner.CornerRadius = UDim.new(0, 13)
+	swCorner.Parent = sw
+
+	local swStroke = Instance.new("UIStroke")
+	swStroke.Thickness = 1.8
+	swStroke.Parent = sw
+
+	local knob = Instance.new("Frame")
+	knob.Parent = sw
+	knob.Size = UDim2.fromOffset(22,22)
+	knob.BackgroundColor3 = Color3.fromRGB(255,255,255)
+	knob.Position = UDim2.new(0,2,0.5,-11)
+
+	local knobCorner = Instance.new("UICorner")
+	knobCorner.CornerRadius = UDim.new(0, 11)
+	knobCorner.Parent = knob
+
+	local function setVisual(on)
+		swStroke.Color = on and Color3.fromRGB(25,255,125) or Color3.fromRGB(255,40,40)
+		knob:TweenPosition(UDim2.new(on and 1 or 0, on and -24 or 2, 0.5, -11), Enum.EasingDirection.Out, Enum.EasingStyle.Quad, 0.08, true)
+	end
+
+	local btn = Instance.new("TextButton")
+	btn.Parent = sw
+	btn.BackgroundTransparency = 1
+	btn.Size = UDim2.fromScale(1,1)
+	btn.Text = ""
+	btn.AutoButtonColor = false
+
+	-- init
+	local enabled = initState.Enabled == true
+	setVisual(enabled)
+
+	btn.MouseButton1Click:Connect(function()
+		enabled = not enabled
+		setVisual(enabled)
+		re:FireServer({ Enabled = enabled }) -- server saves + starts/stops loop
+	end)
+
+	gui.Parent = player:WaitForChild("PlayerGui")
+end
+
+----------------------------------------------------------------------
+-- 8) Player join: load state -> build UI -> auto-run if enabled
+----------------------------------------------------------------------
+Players.PlayerAdded:Connect(function(player)
+	local state = loadState(player)
+
+	-- start loop if enabled
+	if state.Enabled then
+		startRunner(player, state.RelaySec)
+	end
+
+	-- build UI (client sees Home panel)
+	buildClientUI(player, state)
+end)
+
+Players.PlayerRemoving:Connect(function(player)
+	stopRunner(player)
+	runners[player.UserId] = nil
+end)
+
+----------------------------------------------------------------------
+-- 9) bind prompts for existing plots (optional)
+----------------------------------------------------------------------
+task.defer(function()
+	local plots = Workspace:FindFirstChild("Plots")
+	if not plots then return end
+	for _, plot in ipairs(plots:GetChildren()) do
+		bindPrompts(plot)
+	end
 end) 
 --===== UFO HUB X • Home – Auto Claim Rewards 🎁 (Model A V1 + AA1 • PERMA LOOPS) =====
 -- Tab: Home
