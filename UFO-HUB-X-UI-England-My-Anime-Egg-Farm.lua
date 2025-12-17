@@ -4141,8 +4141,9 @@ registerRight("Quest", function(scroll)
         end
     end)
 end)
---===== UFO HUB X • Shop – Model A V1 + AA1 Auto Box Seller (1-5 No Delay, 6+ Wait 5s Each) =====
+--===== UFO HUB X • Shop – Model A V1 + AA1 Auto Box Seller (1-5 Instant, 6+ Wait 5s Between Sells) =====
 -- SELL ONLY (ไม่ปนระบบถือของ)
+-- Rule: Sell #1-#5 = NO WAIT, Sell #6+ = WAIT 5s AFTER each sell (spacing between sells)
 -- AA1 Runner อยู่นอก registerRight => เปิดสวิตช์ค้างไว้แล้วรัน UI ใหม่ = ทำงานต่อทันที (ไม่ต้องกด Shop)
 
 ----------------------------------------------------------------------
@@ -4151,7 +4152,6 @@ end)
 do
     local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
-    -- SAVE (getgenv().UFOX_SAVE)
     local SAVE = (getgenv and getgenv().UFOX_SAVE) or {
         get = function(_, _, d) return d end,
         set = function() end
@@ -4175,14 +4175,12 @@ do
         end)
     end
 
-    -- STATE (ขายอย่างเดียว)
     local STATE = {
         Enabled   = SaveGet("Enabled", false),
-        DelaySec  = SaveGet("DelaySec", 5),  -- ดีเลย์ 5 วิสำหรับครั้งที่ 6+
-        FreeCount = SaveGet("FreeCount", 5), -- 1-5 ฟรี (ไม่รอ)
+        DelaySec  = SaveGet("DelaySec", 5),   -- รอ 5 วิสำหรับ #6+
+        FreeCount = SaveGet("FreeCount", 5),  -- #1-#5 ฟรี (ไม่รอ)
     }
 
-    -- Remote + args (ตามที่ให้มา 100%)
     local cachedSellRemote
     local function GetSellRemote()
         if cachedSellRemote and cachedSellRemote.Parent then
@@ -4212,7 +4210,6 @@ do
         GetSellRemote():FireServer(unpack(args))
     end
 
-    -- runner control
     local loopToken = 0
     local running = false
 
@@ -4229,27 +4226,27 @@ do
 
         task.spawn(function()
             local sellCount = 0
+            local free = tonumber(STATE.FreeCount) or 5
+            if free < 0 then free = 0 end
 
             while STATE.Enabled and loopToken == myToken do
-                -- ✅ Sell #1-#5 ไม่รอ, ตั้งแต่ #6 รอ 5 วิทุกครั้ง
-                if sellCount >= (tonumber(STATE.FreeCount) or 5) then
-                    local d = tonumber(STATE.DelaySec) or 5
-                    if d > 0 then
-                        local tEnd = os.clock() + d
-                        while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
-                            task.wait(0.1)
-                        end
-                    end
-                end
-                if not (STATE.Enabled and loopToken == myToken) then break end
-
                 local ok, err = pcall(SellOnce)
                 if not ok then
                     warn("[AA1 AutoBoxSeller] FireServer failed:", err)
-                    task.wait(0.6)
+                    task.wait(0.35)
                 else
                     sellCount += 1
-                    task.wait(0.05) -- yield เบาๆ กันลูปตึง
+
+                    -- ✅ หลังขาย: ถ้าเกิน #1-#5 แล้ว ค่อยรอ 5 วิ “ทุกครั้ง”
+                    if sellCount > free then
+                        local d = tonumber(STATE.DelaySec) or 5
+                        if d > 0 then
+                            local tEnd = os.clock() + d
+                            while STATE.Enabled and loopToken == myToken and os.clock() < tEnd do
+                                task.wait(0.1)
+                            end
+                        end
+                    end
                 end
             end
 
@@ -4270,7 +4267,6 @@ do
         end
     end
 
-    -- export
     _G.UFOX_AA1 = _G.UFOX_AA1 or {}
     _G.UFOX_AA1[SYSTEM_NAME] = {
         state        = STATE,
@@ -4280,20 +4276,17 @@ do
         ensureRunner = function() task.defer(applyFromState) end
     }
 
-    -- ✅ AA1 auto-run ตอนโหลดสคริปต์ (ไม่ต้องกด Shop)
+    -- ✅ AA1 auto-run ตอนโหลดสคริปต์
     task.defer(applyFromState)
 end
 
 ----------------------------------------------------------------------
--- 2) UI PART: Model A V1 ใน Tab Shop (UI อย่างเดียว + sync กับ AA1)
+-- 2) UI PART: Model A V1 ใน Tab Shop (UI + sync กับ AA1)
 ----------------------------------------------------------------------
 registerRight("Shop", function(scroll)
     local TweenService = game:GetService("TweenService")
     local AA1 = _G.UFOX_AA1 and _G.UFOX_AA1["AutoBoxSeller"]
 
-    ------------------------------------------------------------------------
-    -- THEME + HELPERS (Model A V1)
-    ------------------------------------------------------------------------
     local THEME = {
         GREEN = Color3.fromRGB(25,255,125),
         RED   = Color3.fromRGB(255,40,40),
@@ -4323,17 +4316,11 @@ registerRight("Shop", function(scroll)
         ):Play()
     end
 
-    ------------------------------------------------------------------------
-    -- CLEANUP (เฉพาะระบบนี้)
-    ------------------------------------------------------------------------
     for _, name in ipairs({"ABS_S_Header","ABS_S_Row1"}) do
         local o = scroll:FindFirstChild(name)
         if o then o:Destroy() end
     end
 
-    ------------------------------------------------------------------------
-    -- UIListLayout (A V1) + base LayoutOrder
-    ------------------------------------------------------------------------
     local vlist = scroll:FindFirstChildOfClass("UIListLayout")
     if not vlist then
         vlist = Instance.new("UIListLayout")
@@ -4350,9 +4337,6 @@ registerRight("Shop", function(scroll)
         end
     end
 
-    ------------------------------------------------------------------------
-    -- HEADER (English + emoji)
-    ------------------------------------------------------------------------
     local header = Instance.new("TextLabel")
     header.Name = "ABS_S_Header"
     header.Parent = scroll
@@ -4365,9 +4349,6 @@ registerRight("Shop", function(scroll)
     header.Text = "Auto Box Seller 💰📦"
     header.LayoutOrder = base + 1
 
-    ------------------------------------------------------------------------
-    -- Row Switch (A V1)
-    ------------------------------------------------------------------------
     local function makeRowSwitch(name, order, labelText, getState, setState)
         local row = Instance.new("Frame")
         row.Name = name
@@ -4439,7 +4420,6 @@ registerRight("Shop", function(scroll)
         end
     end)
 
-    -- sync ตอนเปิดแท็บ (แค่ sync UI; ตัว runner ทำงานเองอยู่แล้ว)
     task.defer(function()
         if AA1 and AA1.ensureRunner then AA1.ensureRunner() end
         if setVisual then
