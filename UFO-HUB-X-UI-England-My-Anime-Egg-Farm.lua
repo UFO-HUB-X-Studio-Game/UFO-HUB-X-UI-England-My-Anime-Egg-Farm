@@ -708,91 +708,50 @@ registerRight("Home", function(scroll) end)
 registerRight("Quest", function(scroll) end)
 registerRight("Shop", function(scroll) end)
 registerRight("Settings", function(scroll) end)
---===== UFO HUB X • Home – Model A V1 + AA1 Auto Box Stack Keeper =====
--- Header (English + emoji): "Auto Box Stack Keeper 📦🧠"
--- Row1  (English, no emoji): "Auto Box Stack Keeper"
--- Success rule: Box Stack must DISAPPEAR from Backpack (Backpack no longer contains it) => holding success
--- Then keep holding for 5 minutes; if it comes back, re-activate again.
+--===== UFO HUB X • Home – Model A V1 + AA1 Auto Box Stack Keeper (Stronger Use) =====
 
 registerRight("Home", function(scroll)
     local TweenService = game:GetService("TweenService")
     local Players = game:GetService("Players")
     local LP = Players.LocalPlayer
 
-    ------------------------------------------------------------------------
-    -- AA1 SAVE (getgenv().UFOX_SAVE) + Scope
-    ------------------------------------------------------------------------
-    local SAVE = (getgenv and getgenv().UFOX_SAVE) or {
-        get = function(_, _, d) return d end,
-        set = function() end
-    }
+    -- AA1 SAVE
+    local SAVE = (getgenv and getgenv().UFOX_SAVE) or { get=function(_,_,d) return d end, set=function() end }
 
     local SYSTEM_NAME = "AutoBoxStackKeeper"
     local GAME_ID  = tonumber(game.GameId)  or 0
     local PLACE_ID = tonumber(game.PlaceId) or 0
     local BASE_SCOPE = ("AA1/%s/%d/%d"):format(SYSTEM_NAME, GAME_ID, PLACE_ID)
-
     local function K(field) return BASE_SCOPE .. "/" .. field end
     local function SaveGet(field, default)
-        local ok, v = pcall(function()
-            return SAVE.get(K(field), default)
-        end)
+        local ok, v = pcall(function() return SAVE.get(K(field), default) end)
         return ok and v or default
     end
-    local function SaveSet(field, value)
-        pcall(function()
-            SAVE.set(K(field), value)
-        end)
-    end
+    local function SaveSet(field, value) pcall(function() SAVE.set(K(field), value) end) end
 
-    ------------------------------------------------------------------------
     -- THEME + HELPERS (Model A V1)
-    ------------------------------------------------------------------------
     local THEME = {
         GREEN = Color3.fromRGB(25,255,125),
         RED   = Color3.fromRGB(255,40,40),
         WHITE = Color3.fromRGB(255,255,255),
         BLACK = Color3.fromRGB(0,0,0),
     }
+    local function corner(ui, r) local c=Instance.new("UICorner"); c.CornerRadius=UDim.new(0,r or 12); c.Parent=ui end
+    local function stroke(ui, th, col) local s=Instance.new("UIStroke"); s.Thickness=th or 2.2; s.Color=col or THEME.GREEN; s.ApplyStrokeMode=Enum.ApplyStrokeMode.Border; s.Parent=ui end
+    local function tween(o, p, d) TweenService:Create(o, TweenInfo.new(d or 0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), p):Play() end
 
-    local function corner(ui, r)
-        local c = Instance.new("UICorner")
-        c.CornerRadius = UDim.new(0, r or 12)
-        c.Parent = ui
-    end
-
-    local function stroke(ui, th, col)
-        local s = Instance.new("UIStroke")
-        s.Thickness = th or 2.2
-        s.Color = col or THEME.GREEN
-        s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-        s.Parent = ui
-    end
-
-    local function tween(o, p, d)
-        TweenService:Create(
-            o,
-            TweenInfo.new(d or 0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out),
-            p
-        ):Play()
-    end
-
-    ------------------------------------------------------------------------
-    -- CLEANUP เฉพาะระบบนี้
-    ------------------------------------------------------------------------
+    -- CLEANUP
     for _, name in ipairs({"BS_Header","BS_Row1"}) do
         local o = scroll:FindFirstChild(name)
         if o then o:Destroy() end
     end
 
-    ------------------------------------------------------------------------
-    -- UIListLayout (Model A V1 rules)
-    ------------------------------------------------------------------------
+    -- UIListLayout
     local vlist = scroll:FindFirstChildOfClass("UIListLayout")
     if not vlist then
         vlist = Instance.new("UIListLayout")
         vlist.Parent = scroll
-        vlist.Padding   = UDim.new(0, 12)
+        vlist.Padding = UDim.new(0, 12)
         vlist.SortOrder = Enum.SortOrder.LayoutOrder
     end
     scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
@@ -804,9 +763,7 @@ registerRight("Home", function(scroll)
         end
     end
 
-    ------------------------------------------------------------------------
-    -- HEADER
-    ------------------------------------------------------------------------
+    -- HEADER (English + emoji)
     local header = Instance.new("TextLabel")
     header.Name = "BS_Header"
     header.Parent = scroll
@@ -819,99 +776,92 @@ registerRight("Home", function(scroll)
     header.Text = "Auto Box Stack Keeper 📦🧠"
     header.LayoutOrder = base + 1
 
-    ------------------------------------------------------------------------
-    -- STATE + LOOP (AA1)
-    ------------------------------------------------------------------------
+    -- STATE
     local STATE = {
         Enabled = SaveGet("Enabled", false),
         HoldSec = SaveGet("HoldSec", 300), -- 5 minutes
     }
-
     local loopToken = 0
 
     local function getBackpack()
-        return LP:FindFirstChild("Backpack")
-    end
-
-    local function getChar()
-        return LP.Character
+        return LP:WaitForChild("Backpack")
     end
 
     local function getHumanoid()
-        local ch = getChar()
+        local ch = LP.Character
         if not ch then return nil end
         return ch:FindFirstChildOfClass("Humanoid")
     end
 
-    local function findBoxStackInBackpack()
-        local bp = getBackpack()
-        if not bp then return nil end
-        return bp:FindFirstChild("Box Stack")
-    end
-
-    local function findBoxStackAnywhere()
-        local bp = getBackpack()
-        local ch = getChar()
-        if bp and bp:FindFirstChild("Box Stack") then return bp:FindFirstChild("Box Stack") end
-        if ch and ch:FindFirstChild("Box Stack") then return ch:FindFirstChild("Box Stack") end
-        return nil
-    end
-
     local function backpackHasBoxStack()
-        return findBoxStackInBackpack() ~= nil
+        local bp = LP:FindFirstChild("Backpack")
+        if not bp then return false end
+        return bp:FindFirstChild("Box Stack") ~= nil
     end
 
-    -- ✅ เงื่อนไขสำเร็จตามที่ M บอก: "Box Stack หายไปจาก Backpack" = ถือกล่องแล้ว
+    -- ✅ สำเร็จเมื่อ "Box Stack หายไปจาก Backpack"
     local function holdingByDisappearRule()
         return not backpackHasBoxStack()
+    end
+
+    local function getBoxStackFromBackpack()
+        local bp = LP:FindFirstChild("Backpack")
+        if not bp then return nil end
+        return bp:FindFirstChild("Box Stack")
     end
 
     local function equipTool(tool)
         local hum = getHumanoid()
         if not hum or not tool then return false end
-        local ok = pcall(function()
-            hum:EquipTool(tool)
-        end)
+        local ok = pcall(function() hum:EquipTool(tool) end)
         return ok
     end
 
     local function activateTool(tool)
         if not tool then return false end
-        local ok = pcall(function()
-            tool:Activate()
-        end)
+        local ok = pcall(function() tool:Activate() end)
         return ok
     end
 
-    local function tryMakeItDisappear(timeoutSec)
-        -- 1) ต้องมีใน Backpack ก่อน
-        local tool = findBoxStackInBackpack()
+    -- 🔥 ใช้ของแบบแรง: Activate + ยิง remote/bindable ใน Tool
+    local function strongUse(tool)
+        if not tool then return end
+
+        -- 1) Activate ปกติ
+        pcall(activateTool, tool)
+
+        -- 2) ยิง RemoteEvent/RemoteFunction/Bindable ที่อยู่ใน tool (no args)
+        for _, d in ipairs(tool:GetDescendants()) do
+            if d:IsA("RemoteEvent") then
+                pcall(function() d:FireServer() end)
+            elseif d:IsA("RemoteFunction") then
+                pcall(function() d:InvokeServer() end)
+            elseif d:IsA("BindableEvent") then
+                pcall(function() d:Fire() end)
+            elseif d:IsA("BindableFunction") then
+                pcall(function() d:Invoke() end)
+            end
+        end
+    end
+
+    local function tryMakeDisappear(timeoutSec)
+        local tool = getBoxStackFromBackpack()
         if not tool then return false end
 
-        -- 2) Equip
+        -- ต้อง equip ก่อน
         equipTool(tool)
+        task.wait(0.12)
 
-        -- 3) รอให้ย้ายเข้า Character (ถ้าเกมย้าย)
-        local t0 = os.clock()
-        while os.clock() - t0 < 1.2 do
-            tool = findBoxStackAnywhere()
-            if tool and getChar() and tool.Parent == getChar() then
-                break
-            end
-            task.wait(0.05)
-        end
-
-        -- 4) Activate ให้ระบบถือของทำงาน
-        tool = findBoxStackAnywhere() or tool
-        activateTool(tool)
-
-        -- 5) รอจน "หายจาก Backpack"
-        local endT = os.clock() + (timeoutSec or 2.5)
-        while os.clock() < endT do
+        -- พยายาม use หลายครั้งในช่วงสั้น ๆ จนกว่ามันจะ "หายจาก Backpack"
+        local tEnd = os.clock() + (timeoutSec or 3.0)
+        while os.clock() < tEnd do
             if holdingByDisappearRule() then
                 return true
             end
-            task.wait(0.05)
+            -- tool อาจย้าย parent ระหว่าง equip
+            tool = tool.Parent and tool or getBoxStackFromBackpack()
+            strongUse(tool)
+            task.wait(0.12)
         end
         return holdingByDisappearRule()
     end
@@ -920,31 +870,26 @@ registerRight("Home", function(scroll)
         local hold = tonumber(STATE.HoldSec) or 300
         if hold < 5 then hold = 5 end
 
-        local heldTime = 0
-        local lastTick = os.clock()
+        local held = 0
+        local last = os.clock()
 
         while STATE.Enabled and loopToken == myToken do
             local now = os.clock()
-            local dt = now - lastTick
-            lastTick = now
+            local dt = now - last
+            last = now
 
             if holdingByDisappearRule() then
-                heldTime += dt
-                if heldTime >= hold then
-                    -- ครบ 5 นาทีแล้ว จบ 1 รอบ (จะเริ่มรอบใหม่ถ้ายังเปิดอยู่)
+                held += dt
+                if held >= hold then
                     return
                 end
                 task.wait(0.25)
             else
-                -- ยังไม่ถือ (เพราะ Box Stack ยังอยู่ใน Backpack) -> ทำให้มันหายไป
-                local ok = pcall(function()
-                    tryMakeItDisappear(3.0)
+                -- ยังไม่ถือ -> ทำให้หายจาก Backpack ก่อน
+                pcall(function()
+                    tryMakeDisappear(3.0)
                 end)
-                if not ok then
-                    task.wait(0.4)
-                else
-                    task.wait(0.15)
-                end
+                task.wait(0.25)
             end
         end
     end
@@ -974,9 +919,7 @@ registerRight("Home", function(scroll)
     -- AA1 auto-run
     task.defer(applyFromState)
 
-    ------------------------------------------------------------------------
     -- Row Switch (Model A V1)
-    ------------------------------------------------------------------------
     local function makeRowSwitch(name, order, labelText, getState, setState)
         local row = Instance.new("Frame")
         row.Name = name
@@ -1045,15 +988,8 @@ registerRight("Home", function(scroll)
         SetEnabled(v)
     end)
 
-    ------------------------------------------------------------------------
-    -- Export
-    ------------------------------------------------------------------------
     _G.UFOX_AA1 = _G.UFOX_AA1 or {}
-    _G.UFOX_AA1[SYSTEM_NAME] = {
-        state      = STATE,
-        apply      = applyFromState,
-        setEnabled = SetEnabled,
-    }
+    _G.UFOX_AA1[SYSTEM_NAME] = { state = STATE, apply = applyFromState, setEnabled = SetEnabled }
 end)
 --===== UFO HUB X • Home – Auto Rebirth (AA1 Runner + Model A V1 + A V2) =====
 -- Logic main:
